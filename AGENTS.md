@@ -4,7 +4,7 @@ Read this first. The README has setup; this file has the design.
 
 ## Stack
 
-Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and the vendored `public/vendor/sortable.min.js` as a classic script.
+Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and pulls SortableJS from a jsdelivr CDN.
 
 When changing bindings: `npx wrangler types` (then re-run typecheck).
 

@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/seed-local.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
@@ -12,7 +11,6 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260605.1",
-    "sortablejs": "^1.15.2",
     "typescript": "5.9.3",
     "wrangler": "^4.98.0"
   },

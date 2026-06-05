@@ -71,8 +71,7 @@ textarea {
   font: inherit;
   color: inherit;
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 0.2rem solid var(--border);
   padding: 6px 8px;
 }
 
@@ -83,8 +82,7 @@ button {
 dialog {
   background: var(--surface);
   color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 0.2rem solid var(--border);
   padding: 16px;
   min-width: 280px;
 }
@@ -101,6 +99,8 @@ dialog::backdrop {
   padding: 12px 16px;
   height: 56px;
   position: relative;
+  background: var(--surface);
+  border-bottom: 0.2rem solid var(--border);
 }
 
 #topbar button {
@@ -121,22 +121,28 @@ dialog::backdrop {
 body.touch #m-view {
   position: absolute;
   right: 16px;
+  color: var(--lightest1);
+}
+
+@media (max-width: 500px) {
+  #topbar {
+    justify-content: flex-start;
+  }
 }
 
 body.touch #m-palette {
-  border: 1px solid var(--border);
+  border: none;
   padding: 4px 10px;
-  border-radius: 4px;
   cursor: pointer;
 }
 
 body.touch #m-view {
   display: inline-block;
-  border: 1px solid var(--border);
+  border: 0.2rem solid var(--border);
   padding: 4px 10px;
-  border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
+  font-family: var(--headerFont) !important;
 }
 
 /* board */
@@ -162,8 +168,7 @@ body.dragging-scroll .entries {
   display: flex;
   flex-direction: column;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 0.2rem solid var(--border);
   max-height: calc(100vh - 88px);
   overflow: hidden;
 }
@@ -178,7 +183,7 @@ body.dragging-scroll .entries {
 
 .list-name {
   padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0.2rem solid var(--border);
   font-family: var(--headerFont);
   font-size: 22px;
   letter-spacing: 0.5px;
@@ -196,21 +201,24 @@ body.dragging-scroll .entries {
 .entries {
   list-style: none;
   margin: 0;
-  padding: 4px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  padding: 0;
   min-height: 4px;
 }
 
 .entry {
   padding: 10px 10px;
-  border-radius: 4px;
   word-break: break-word;
+  white-space: pre-wrap;
   cursor: pointer;
 }
 
+.entry[data-todo] {
+  background: var(--blue3);
+  color: var(--lightest1);
+}
+
 .entry+.entry {
-  border-top: 1px solid var(--border);
+  border-top: 0.2rem solid var(--border);
 }
 
 .entry[data-sep] {
@@ -220,14 +228,45 @@ body.dragging-scroll .entries {
   opacity: 0.55;
 }
 
-.entry[data-sep]+.entry,
-.entry+.entry[data-sep] {
+.entry[data-sep]+.entry {
   border-top: none;
 }
 
 .entry[data-selected] {
   background: var(--darkest3);
-  outline: 1px solid var(--accent);
+  outline: 0.2rem solid var(--accent);
+}
+
+/* The divider that sits at the top of a selected/todo entry should match that
+   entry's own background, otherwise the gray separator bleeds into the color. */
+.entry[data-selected] {
+  border-top-color: var(--darkest3);
+}
+
+body[data-mode="insert"] .entry[data-selected] {
+  border-top-color: var(--darkest4);
+}
+
+.entry[data-todo] {
+  border-top-color: var(--blue3);
+}
+
+body[data-mode="insert"] .entry[data-selected][data-todo] {
+  border-top-color: var(--blue2);
+}
+
+/* todo overrides the selection background so it stays blue while hovered/selected */
+.entry[data-todo][data-selected] {
+  background: var(--blue3);
+}
+
+/* editing — lighten the background of the entry being edited */
+body[data-mode="insert"] .entry[data-selected] {
+  background: var(--darkest4);
+}
+
+body[data-mode="insert"] .entry[data-selected][data-todo] {
+  background: var(--blue2);
 }
 
 .entry input,
@@ -297,31 +336,41 @@ body[data-view="single"] #dots {
 
 /* mobile (body.touch is set by JS using matchMedia OR a mobile UA) */
 body.touch #board {
-  height: calc(100vh - 100px);
+  height: calc(100vh - 200px);
   padding: 8px;
 }
 
 body.touch #actions {
   display: flex;
-  justify-content: space-around;
-  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: center;
+  gap: 6px;
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 8px;
-  border-top: 1px solid var(--border);
+  padding: 10px;
+  border-top: 0.2rem solid var(--border);
   background: var(--surface);
 }
 
+body.touch #actions button {
+  flex: 1 1 90px;
+  max-width: 180px;
+  font-size: 12px;
+  padding: 6px 10px;
+  text-align: center;
+}
+
 body.touch #dots {
-  bottom: 60px;
+  bottom: 160px;
 }
 
 body.touch .list {
   flex-basis: 90vw;
   max-width: 90vw;
-  max-height: calc(100vh - 133px);
+  max-height: calc(100vh - 230px);
 }
 
 body.touch .confirm-btn {
@@ -359,7 +408,6 @@ body.touch #palette-input {
 
 #palette-list li {
   padding: 6px 8px;
-  border-radius: 4px;
   cursor: pointer;
 }
 

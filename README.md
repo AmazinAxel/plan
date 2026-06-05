@@ -10,12 +10,10 @@ beta app made w/ Claude
 
 ```sh
 bun install        # or npm install
-bun run dev        # password is "1234"
+bun run dev
 ```
 
-`predev` runs `scripts/seed-local.mjs`, which writes `auth:hash` (sha256 of `1234`) and a fixed dev `auth:secret` into the local Miniflare KV. Safe to re-run; cookies persist across restarts.
-
-To change the local password, edit `PASSWORD` in `scripts/seed-local.mjs`.
+`wrangler dev` reads from the production KV namespace (`remote: true` in `wrangler.jsonc`), so use the same password you seeded into prod. No local seeding step.
 
 ## Deploy to Cloudflare
 
@@ -69,7 +67,6 @@ To rotate the password or invalidate every existing session, overwrite the corre
 | `public/index.html`             | App shell + dialogs                                   |
 | `public/styles.css`             | Nord palette and base layout — style freely           |
 | `public/app.js`                 | All client logic: state, render, keyboard, touch, drag |
-| `public/vendor/sortable.min.js` | SortableJS (vendored)                                 |
 | `AGENTS.md`                     | Operating manual for future Claude sessions           |
 
 ## API

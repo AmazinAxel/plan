@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -9,6 +10,7 @@
   <link rel="icon" type="image/png" href="/planning.png" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
+
 <body data-mode="normal" data-view="multi">
 
   <dialog id="auth">
@@ -20,7 +22,7 @@
 
   <header id="topbar">
     <button type="button" id="m-palette"><span id="m-plan-name">Plan</span></button>
-    <button type="button" id="m-view">view</button>
+    <button type="button" id="m-view">toggle view</button>
   </header>
 
   <main id="board" tabindex="-1"></main>
@@ -28,11 +30,10 @@
   <nav id="dots" hidden></nav>
 
   <footer id="actions" hidden>
-    <button type="button" data-act="new-plan">+ plan</button>
-    <button type="button" data-act="del-plan" id="m-del-plan">del plan</button>
-    <button type="button" data-act="new-list">+ list</button>
-    <button type="button" data-act="edit-list">edit list</button>
-    <button type="button" data-act="del-list">del list</button>
+    <button type="button" data-act="new-plan">+ new plan</button>
+    <button type="button" data-act="del-plan" id="m-del-plan">- del plan</button>
+    <button type="button" data-act="new-list">+ new list</button>
+    <button type="button" data-act="del-list">- del list</button>
     <button type="button" data-act="new-entry">+ entry</button>
   </footer>
 
@@ -64,7 +65,8 @@
     </form>
   </dialog>
 
-  <script src="/vendor/sortable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
+
 </html>

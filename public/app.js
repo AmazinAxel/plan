@@ -28,10 +28,16 @@ async function flushSave() {
   if (!savePending) return;
   savePending = false;
   lastSaveAt = Date.now();
+  // Strip whitespace-only entries before persisting. We do this on a clone so
+  // an entry currently being edited (with empty initial text) stays in memory.
+  const cleaned = JSON.parse(JSON.stringify(state.data));
+  cleaned.plans.forEach((p) => p.lists.forEach((l) => {
+    l.entries = l.entries.filter((e) => e.text && e.text.trim());
+  }));
   await fetch("/api/data", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(state.data),
+    body: JSON.stringify(cleaned),
   });
 }
 function save() {
@@ -83,6 +89,7 @@ function render() {
       it.dataset.entryId = e.id;
       it.textContent = e.text;
       if (/^-{3,}(\s.*\s-{3,})?$/.test(e.text)) it.dataset.sep = "";
+      if (e.todo) it.dataset.todo = "";
       if (li === state.selection.listIndex && ei === state.selection.entryIndex) it.dataset.selected = "";
       ul.appendChild(it);
     });
@@ -148,6 +155,11 @@ function attachSortables() {
       group: { name: "entries", pull: !singleView, put: !singleView },
       animation: 120,
       draggable: ".entry",
+      // On touch devices, require a brief hold before dragging starts. This lets
+      // a quick vertical swipe scroll the list instead of latching onto an entry.
+      delay: 250,
+      delayOnTouchOnly: true,
+      touchStartThreshold: 5,
       onStart: () => body.classList.add("dragging"),
       onEnd: (ev) => {
         body.classList.remove("dragging");
@@ -221,7 +233,7 @@ function editList(listIndex, isNew = false) {
   });
 }
 
-function editEntry(listIndex, entryIndex) {
+function editEntry(listIndex, entryIndex, isNew = false) {
   const plan = activePlan();
   const list = plan.lists[listIndex];
   if (!list) return;
@@ -250,7 +262,7 @@ function editEntry(listIndex, entryIndex) {
     else list.entries.splice(entryIndex, 1);
     save();
     setMode("normal"); render();
-    if (chain && state.isTouch && v) newEntryBelow();
+    if (chain && v && isNew) newEntryBelow();
   };
   input.addEventListener("blur", () => { if (!cancelled) commit(); });
   input.addEventListener("keydown", (e) => {
@@ -296,7 +308,22 @@ function newEntryBelow() {
   state.selection.entryIndex = at;
   save();
   render();
-  editEntry(state.selection.listIndex, at);
+  editEntry(state.selection.listIndex, at, true);
+}
+
+function toggleTodo() {
+  const plan = activePlan();
+  const list = plan.lists[state.selection.listIndex];
+  if (!list || state.selection.entryIndex < 0) return;
+  const entry = list.entries[state.selection.entryIndex];
+  if (entry.todo) {
+    delete entry.todo;
+  } else {
+    // Only one todo per list — clear any other before marking this one.
+    list.entries.forEach((x) => { delete x.todo; });
+    entry.todo = true;
+  }
+  save(); render();
 }
 
 function deleteEntry() {
@@ -347,6 +374,10 @@ function move(dx, dy) {
   if (dy) {
     const list = plan.lists[state.selection.listIndex];
     if (!list || list.entries.length === 0) { state.selection.entryIndex = -1; }
+    else if (state.selection.entryIndex === -1) {
+      // Coming from the list header: up jumps to the last entry, down to the first.
+      state.selection.entryIndex = dy > 0 ? 0 : list.entries.length - 1;
+    }
     else {
       const next = state.selection.entryIndex + dy;
       state.selection.entryIndex = (next < 0 || next >= list.entries.length) ? -1 : next;
@@ -642,8 +673,15 @@ document.addEventListener("keydown", (e) => {
       if (state.selection.entryIndex >= 0) deleteEntry();
       else deleteCurrentList();
       break;
+    case "Escape": {
+      e.preventDefault();
+      state.selection.entryIndex = -1;
+      render(); scrollSelectionIntoView();
+      break;
+    }
     case "n": e.preventDefault(); newList(); break;
     case "b": e.preventDefault(); openBg(); break;
+    case "Tab": e.preventDefault(); toggleTodo(); break;
     case "e":
       e.preventDefault();
       if (state.selection.entryIndex >= 0) editEntry(state.selection.listIndex, state.selection.entryIndex);
@@ -669,7 +707,8 @@ function setupTouch() {
 
   board.addEventListener("click", (e) => { if (e.target === board) setMode("normal"); });
 
-  // tap a list's header → select that list (entryIndex = -1)
+  // tap a list's header → select; double-tap → edit the name (replaces the old edit-list button)
+  let lastListTap = { idx: -1, time: 0 };
   board.addEventListener("click", (e) => {
     const name = e.target.closest(".list-name");
     if (!name) return;
@@ -678,7 +717,15 @@ function setupTouch() {
     if (li < 0) return;
     state.selection.listIndex = li;
     state.selection.entryIndex = -1;
-    render();
+    const now = Date.now();
+    if (lastListTap.idx === li && now - lastListTap.time < 300) {
+      lastListTap = { idx: -1, time: 0 };
+      render();
+      editList(li);
+    } else {
+      lastListTap = { idx: li, time: now };
+      render();
+    }
   });
 
   let lastTap = { id: null, time: 0 };
@@ -704,10 +751,10 @@ function setupTouch() {
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
     touchStart = null;
-    // In single-list view, swipe switches between PLANS (lists are navigated via arrows/dots/buttons).
-    // In multi view we let the touch scroll the board naturally.
+    // In single-list view, swipe cycles through LISTS in the current plan.
+    // Plan switching on mobile is intentional only — via the plan-name button → palette.
     if (body.dataset.view !== "single") return;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) switchPlan(dx < 0 ? 1 : -1);
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) move(dx < 0 ? 1 : -1, 0);
   });
 
   $("actions").addEventListener("click", (e) => {
@@ -717,7 +764,6 @@ function setupTouch() {
       "new-plan": openNewPlan,
       "del-plan": deleteCurrentPlan,
       "new-list": newList,
-      "edit-list": () => editList(state.selection.listIndex),
       "del-list": deleteCurrentList,
       "new-entry": newEntryBelow,
     })[act]?.();
