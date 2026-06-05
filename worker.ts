@@ -30,9 +30,10 @@ async function handleAuth(req: Request, env: Env): Promise<Response> {
   if (!(await checkPassword(body.password, hash))) {
     return json({ error: "invalid" }, { status: 401 });
   }
+  const secure = new URL(req.url).protocol === "https:";
   return new Response(null, {
     status: 204,
-    headers: { "Set-Cookie": await buildSessionCookie(secret) },
+    headers: { "Set-Cookie": await buildSessionCookie(secret, secure) },
   });
 }
 

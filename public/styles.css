@@ -54,8 +54,15 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--primaryFont);
-  font-size: 14px;
+  font-size: 21px;
   overflow: hidden;
+}
+
+input:focus,
+textarea:focus,
+.list-name input,
+.entry input {
+  outline: none;
 }
 
 input,
@@ -86,14 +93,14 @@ dialog::backdrop {
   background: rgba(0, 0, 0, 0.5);
 }
 
-/* topbar — always visible, shows the active plan name */
+/* topbar — always visible, shows the active plan name centered */
 #topbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  height: 40px;
+  padding: 12px 16px;
+  height: 56px;
+  position: relative;
 }
 
 #topbar button {
@@ -101,13 +108,19 @@ dialog::backdrop {
   border: none;
   padding: 0;
   font-family: var(--headerFont);
-  font-size: 16px;
+  font-size: 28px;
   letter-spacing: 0.5px;
   cursor: default;
+  color: var(--blue2);
 }
 
 #m-view {
   display: none;
+}
+
+body.touch #m-view {
+  position: absolute;
+  right: 16px;
 }
 
 body.touch #m-palette {
@@ -128,7 +141,7 @@ body.touch #m-view {
 
 /* board */
 #board {
-  height: calc(100vh - 41px);
+  height: calc(100vh - 56px);
   overflow-x: auto;
   overflow-y: hidden;
   display: flex;
@@ -151,13 +164,10 @@ body.dragging-scroll .entries {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  max-height: calc(100vh - 73px);
+  max-height: calc(100vh - 88px);
   overflow: hidden;
 }
 
-.list[data-selected] {
-  border-color: var(--accent);
-}
 
 .list[data-list-selected] .list-name {
   background: var(--darkest3);

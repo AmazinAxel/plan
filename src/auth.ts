@@ -24,9 +24,10 @@ async function hmacHex(secretHex: string, message: string): Promise<string> {
 const COOKIE_NAME = "session";
 const SESSION_PAYLOAD = "v1";
 
-export async function buildSessionCookie(secretHex: string): Promise<string> {
+export async function buildSessionCookie(secretHex: string, secure: boolean): Promise<string> {
   const token = await hmacHex(secretHex, SESSION_PAYLOAD);
-  return `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=31536000000`;
+  const flags = `HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=/; Max-Age=31536000000`;
+  return `${COOKIE_NAME}=${token}; ${flags}`;
 }
 
 function readCookie(req: Request, name: string): string | null {

@@ -61,7 +61,7 @@ Four concerns, in this order in the file:
 | `m`      | New plan — modal prompts for name; Enter creates, Esc cancels    |
 | `e`      | Edit current list name (or selected entry, if one is selected)   |
 | `r`      | Delete current plan (confirm dialog; `Plan` is protected)        |
-| `:`      | Plan palette — fuzzy match, Enter switches plan                  |
+| `Space`  | Plan palette — fuzzy match, Enter switches plan                  |
 | `v`      | Toggle multi-list / single-list view (desktop only)              |
 | Esc      | Forces save (insert/palette/confirm modals handle their own close) |
 

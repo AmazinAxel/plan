@@ -1,19 +1,20 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "plan",
-  "compatibility_date": "2025-10-08",
-  "main": "./worker.ts",
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS"
-  },
-  "observability": {
-    "enabled": true
-  },
-  "kv_namespaces": [
-    {
-      "binding": "PLAN_KV",
-      "id": "cf8aa41453dc4be09ff86530895773e1"
-    }
-  ]
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "plan",
+	"compatibility_date": "2025-10-08",
+	"main": "./worker.ts",
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"kv_namespaces": [
+		{
+			"binding": "PLAN_KV",
+			"id": "a7482a28bc8047c6af8cf4ea9ea77d29",
+			"remote": true
+		}
+	]
 }

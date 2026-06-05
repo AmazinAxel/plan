@@ -510,6 +510,7 @@ board.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (body.dataset.mode !== "normal") return;
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return; // let browser shortcuts (Ctrl+R, etc.) through
 
   switch (e.key) {
     case "ArrowUp":    e.preventDefault(); (e.shiftKey ? shiftMove : move)(0, -1); break;
@@ -531,7 +532,7 @@ document.addEventListener("keydown", (e) => {
       else editList(state.selection.listIndex);
       break;
     case "r": e.preventDefault(); deleteCurrentPlan(); break;
-    case ":": e.preventDefault(); openPalette(); break;
+    case " ": e.preventDefault(); openPalette(); break;
     case "v":
       if (state.isTouch) break;
       e.preventDefault();
