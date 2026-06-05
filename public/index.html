@@ -6,6 +6,7 @@
   <title>Plan</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="icon" type="image/png" href="/planning.png" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body data-mode="normal" data-view="multi">
@@ -52,6 +53,13 @@
   <dialog id="confirm">
     <form method="dialog" id="confirm-form">
       <p id="confirm-text"></p>
+      <button type="submit" class="confirm-btn">Confirm</button>
+    </form>
+  </dialog>
+
+  <dialog id="bg">
+    <form method="dialog" id="bg-form">
+      <input type="url" id="bg-input" autocomplete="off" placeholder="background image URL (empty to clear)" />
       <button type="submit" class="confirm-btn">Confirm</button>
     </form>
   </dialog>

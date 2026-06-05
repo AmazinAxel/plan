@@ -40,6 +40,11 @@ function save() {
   const wait = Math.max(0, SAVE_INTERVAL - (Date.now() - lastSaveAt));
   saveTimer = setTimeout(flushSave, wait);
 }
+function saveNow() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  savePending = true;
+  return flushSave();
+}
 
 // ---------- mode ----------
 function setMode(mode) { body.dataset.mode = mode; }
@@ -77,6 +82,7 @@ function render() {
       it.className = "entry";
       it.dataset.entryId = e.id;
       it.textContent = e.text;
+      if (/^-{3,}(\s.*\s-{3,})?$/.test(e.text)) it.dataset.sep = "";
       if (li === state.selection.listIndex && ei === state.selection.entryIndex) it.dataset.selected = "";
       ul.appendChild(it);
     });
@@ -88,6 +94,15 @@ function render() {
   attachSortables();
   $("m-plan-name").textContent = plan.name || "—";
   $("m-del-plan").hidden = plan.name === "Plan";
+  document.title = !plan.name ? "plan" : plan.name === "Plan" ? "Plan" : `${plan.name} plan`;
+  const bg = plan.background;
+  if (bg) {
+    body.style.backgroundImage = `url("${bg.replace(/"/g, "%22")}")`;
+    body.style.backgroundSize = "cover";
+    body.style.backgroundPosition = "center";
+  } else {
+    body.style.backgroundImage = "";
+  }
 }
 
 function renderDots(plan) {
@@ -150,7 +165,23 @@ function attachSortables() {
 }
 
 // ---------- editing ----------
-function editList(listIndex) {
+// If the tab/window loses focus while editing, defer the commit until it
+// returns instead of dropping the in-flight text.
+function keepFocusOnTabSwitch(input) {
+  const onBlur = (e) => {
+    if (document.hasFocus()) return; // a real interactive blur — let the caller's handler commit
+    e.stopImmediatePropagation();
+    const onFocus = () => {
+      window.removeEventListener("focus", onFocus);
+      if (document.body.dataset.mode === "insert") input.focus();
+    };
+    window.addEventListener("focus", onFocus);
+  };
+  input.addEventListener("blur", onBlur, true); // capture-phase, runs before commit handler
+  return () => input.removeEventListener("blur", onBlur, true);
+}
+
+function editList(listIndex, isNew = false) {
   const plan = activePlan();
   const list = plan.lists[listIndex];
   if (!list) return;
@@ -163,17 +194,29 @@ function editList(listIndex) {
   nameEl.appendChild(input);
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
+  const stopKeep = keepFocusOnTabSwitch(input);
   const commit = () => {
+    stopKeep();
     list.name = input.value.trim();
     save();
     setMode("normal"); render();
     if (list.entries.length === 0) newEntryBelow();
   };
+  const cancel = () => {
+    stopKeep();
+    if (isNew && !list.name && list.entries.length === 0) {
+      plan.lists.splice(listIndex, 1);
+      if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
+      state.selection.entryIndex = -1;
+      save();
+    }
+    setMode("normal"); render();
+  };
   let cancelled = false;
   input.addEventListener("blur", () => { if (!cancelled) commit(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-    else if (e.key === "Escape") { e.preventDefault(); cancelled = true; setMode("normal"); render(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancelled = true; cancel(); }
     e.stopPropagation();
   });
 }
@@ -188,14 +231,20 @@ function editEntry(listIndex, entryIndex) {
   const sec = board.querySelectorAll(".list")[listIndex];
   const it = sec.querySelectorAll(".entry")[entryIndex];
   it.textContent = "";
-  const input = document.createElement("input");
+  const input = document.createElement("textarea");
   input.value = entry.text;
+  input.rows = 1;
   it.appendChild(input);
+  const resize = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
+  input.addEventListener("input", resize);
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
+  resize();
+  const stopKeep = keepFocusOnTabSwitch(input);
   let cancelled = false;
   let chain = false;
   const commit = () => {
+    stopKeep();
     const v = input.value.trim();
     if (v) entry.text = v;
     else list.entries.splice(entryIndex, 1);
@@ -205,9 +254,9 @@ function editEntry(listIndex, entryIndex) {
   };
   input.addEventListener("blur", () => { if (!cancelled) commit(); });
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); chain = true; input.blur(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chain = true; input.blur(); }
     else if (e.key === "Escape") {
-      e.preventDefault(); cancelled = true;
+      e.preventDefault(); cancelled = true; stopKeep();
       if (!entry.text) list.entries.splice(entryIndex, 1);
       setMode("normal"); render();
     }
@@ -223,7 +272,18 @@ function newList() {
   state.selection.entryIndex = -1;
   save();
   render();
-  editList(state.selection.listIndex);
+  editList(state.selection.listIndex, true);
+}
+
+function switchPlan(dir) {
+  if (state.data.plans.length < 2) return;
+  const idx = state.data.plans.findIndex((p) => p.id === state.data.activePlanId);
+  const next = Math.max(0, Math.min(state.data.plans.length - 1, idx + dir));
+  if (next === idx) return;
+  state.data.activePlanId = state.data.plans[next].id;
+  state.selection = { listIndex: 0, entryIndex: -1 };
+  save();
+  render();
 }
 
 function newEntryBelow() {
@@ -383,9 +443,11 @@ function openPalette() {
   setMode("palette");
 
   const matching = () => state.data.plans.filter((p) => !input.value || fuzzyMatch(input.value, p.name));
+  // The "<New plan>" row is appended after all matches, at index `matches.length`.
   const refresh = () => {
     const matches = matching();
-    if (highlighted >= matches.length) highlighted = Math.max(0, matches.length - 1);
+    const total = matches.length + 1;
+    if (highlighted >= total) highlighted = total - 1;
     list.innerHTML = "";
     matches.forEach((p, i) => {
       const li = document.createElement("li");
@@ -396,6 +458,12 @@ function openPalette() {
       li.addEventListener("click", () => pick(p.id));
       list.appendChild(li);
     });
+    const newLi = document.createElement("li");
+    newLi.textContent = "<New plan>";
+    newLi.dataset.newPlan = "";
+    if (highlighted === matches.length) newLi.dataset.active = "";
+    newLi.addEventListener("click", () => createNew());
+    list.appendChild(newLi);
   };
 
   const pick = (planId) => {
@@ -405,12 +473,19 @@ function openPalette() {
     cleanup(); dlg.close(); setMode("normal"); render();
   };
 
+  const createNew = () => {
+    const seed = input.value.trim();
+    cleanup(); dlg.close(); setMode("normal"); openNewPlan(seed);
+  };
+
   const onKey = (e) => {
     const matches = matching();
-    if (e.key === "ArrowDown") { e.preventDefault(); highlighted = Math.min(matches.length - 1, highlighted + 1); refresh(); }
+    const total = matches.length + 1;
+    if (e.key === "ArrowDown") { e.preventDefault(); highlighted = Math.min(total - 1, highlighted + 1); refresh(); }
     else if (e.key === "ArrowUp") { e.preventDefault(); highlighted = Math.max(0, highlighted - 1); refresh(); }
     else if (e.key === "Enter") {
       e.preventDefault();
+      if (highlighted === matches.length) { createNew(); return; }
       if (matches[highlighted]) pick(matches[highlighted].id);
     }
   };
@@ -429,17 +504,17 @@ function openPalette() {
   input.focus();
 }
 
-function openNewPlan() {
+function openNewPlan(seedName = "") {
   const dlg = $("new-plan");
   const input = $("new-plan-input");
-  input.value = "";
+  input.value = seedName;
   setMode("palette"); // same "modal-open" state for the global key handler
 
   let created = false;
   const submit = () => {
     const name = input.value.trim();
     if (!name) return;
-    const p = { id: uuid(), name, lists: [] };
+    const p = { id: uuid(), name, lists: [{ id: uuid(), name: "", entries: [] }] };
     state.data.plans.push(p);
     state.data.activePlanId = p.id;
     state.selection = { listIndex: 0, entryIndex: -1 };
@@ -454,7 +529,7 @@ function openNewPlan() {
   const onClose = () => {
     cleanup();
     setMode("normal");
-    if (created) render();
+    if (created) { render(); editList(0, true); }
   };
   const cleanup = () => {
     input.removeEventListener("keydown", onKey);
@@ -463,6 +538,39 @@ function openNewPlan() {
   };
   input.addEventListener("keydown", onKey);
   $("new-plan-form").addEventListener("submit", onSubmit);
+  dlg.addEventListener("close", onClose);
+  dlg.showModal();
+  input.focus();
+  input.select();
+}
+
+function openBg() {
+  const plan = activePlan();
+  if (!plan) return;
+  const dlg = $("bg");
+  const input = $("bg-input");
+  const form = $("bg-form");
+  input.value = plan.background || "";
+  setMode("palette");
+  let confirmed = false;
+  const submit = () => {
+    const v = input.value.trim();
+    if (v) plan.background = v; else delete plan.background;
+    confirmed = true;
+    saveNow();
+    dlg.close();
+  };
+  const onSubmit = (e) => { e.preventDefault(); submit(); };
+  const onKey = (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
+  const onClose = () => {
+    form.removeEventListener("submit", onSubmit);
+    input.removeEventListener("keydown", onKey);
+    dlg.removeEventListener("close", onClose);
+    setMode("normal");
+    if (confirmed) render();
+  };
+  form.addEventListener("submit", onSubmit);
+  input.addEventListener("keydown", onKey);
   dlg.addEventListener("close", onClose);
   dlg.showModal();
   input.focus();
@@ -501,7 +609,17 @@ board.addEventListener("click", (e) => {
     drag.scroller.scrollLeft = drag.sx - dx;
     drag.scroller.scrollTop = drag.sy - dy;
   });
-  const end = () => { if (drag?.moved) board.releasePointerCapture(drag.pid); drag = null; body.classList.remove("dragging-scroll"); };
+  const end = (e) => {
+    if (drag?.moved) board.releasePointerCapture(drag.pid);
+    // single-list desktop view: a horizontal pointer drag on empty board area cycles plans
+    if (drag && drag.moved && body.dataset.view === "single" && !state.isTouch && drag.scroller === board) {
+      const dx = e?.clientX != null ? e.clientX - drag.x : 0;
+      const dy = e?.clientY != null ? e.clientY - drag.y : 0;
+      if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) switchPlan(dx < 0 ? 1 : -1);
+    }
+    drag = null;
+    body.classList.remove("dragging-scroll");
+  };
   board.addEventListener("pointerup", end);
   board.addEventListener("pointercancel", end);
 })();
@@ -525,7 +643,7 @@ document.addEventListener("keydown", (e) => {
       else deleteCurrentList();
       break;
     case "n": e.preventDefault(); newList(); break;
-    case "m": e.preventDefault(); openNewPlan(); break;
+    case "b": e.preventDefault(); openBg(); break;
     case "e":
       e.preventDefault();
       if (state.selection.entryIndex >= 0) editEntry(state.selection.listIndex, state.selection.entryIndex);
@@ -586,9 +704,10 @@ function setupTouch() {
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
     touchStart = null;
-    // only switch lists by swipe in single-list view; in multi view the user is panning the board.
+    // In single-list view, swipe switches between PLANS (lists are navigated via arrows/dots/buttons).
+    // In multi view we let the touch scroll the board naturally.
     if (body.dataset.view !== "single") return;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) move(dx < 0 ? 1 : -1, 0);
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) switchPlan(dx < 0 ? 1 : -1);
   });
 
   $("actions").addEventListener("click", (e) => {
@@ -611,7 +730,7 @@ function setupTouch() {
 }
 
 // dialog backdrop click closes (mobile expectation)
-["palette", "new-plan", "confirm"].forEach((id) => attachBackdropClose($(id)));
+["palette", "new-plan", "confirm", "bg"].forEach((id) => attachBackdropClose($(id)));
 
 // ---------- auth + boot ----------
 async function boot() {
@@ -643,7 +762,7 @@ async function loadData() {
   const res = await fetch("/api/data");
   if (!res.ok) { showAuth(); return; }
   state.data = await res.json();
-  if (state.isTouch) body.dataset.view = "single";
+  if (state.isTouch || innerWidth < 600) body.dataset.view = "single";
   setupTouch();
   render();
   board.focus();

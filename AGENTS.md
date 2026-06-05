@@ -57,11 +57,11 @@ Four concerns, in this order in the file:
 | Shift+←/→ | If an entry is selected: move it to the adjacent list. If the list is selected: reorder the list itself |
 | Enter    | New entry below the selected one (cursor in insert mode)         |
 | Delete/Backspace | Delete selected entry, or — if the list itself is selected (`entryIndex = -1`) — delete the list. Skips the confirmation dialog when the list is empty. |
-| `n`      | New list (empty name, ready to type)                             |
-| `m`      | New plan — modal prompts for name; Enter creates, Esc cancels    |
+| `n`      | New list (empty name, ready to type; Esc removes the empty list) |
 | `e`      | Edit current list name (or selected entry, if one is selected)   |
 | `r`      | Delete current plan (confirm dialog; `Plan` is protected)        |
-| `Space`  | Plan palette — fuzzy match, Enter switches plan                  |
+| `b`      | Set / clear background image URL for current plan                |
+| `Space`  | Plan palette — fuzzy match, Enter switches plan. Always shows a `<New plan>` row at the bottom which opens the new-plan confirm dialog. |
 | `v`      | Toggle multi-list / single-list view (desktop only)              |
 | Esc      | Forces save (insert/palette/confirm modals handle their own close) |
 
