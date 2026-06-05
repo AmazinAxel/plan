@@ -1,0 +1,363 @@
+@import url("https://fonts.googleapis.com/css2?family=Hammersmith+One&family=Sora:wght@300;400;600&display=swap");
+
+:root {
+  /* Polar Night */
+  --darkest1: #2e3440;
+  --darkest2: #3b4252;
+  --darkest3: #434c5e;
+  --darkest4: #4c566a;
+
+  /* Snow Storm */
+  --lightest1: #eceff4;
+  --lightest2: #e5e9f0;
+  --lightest3: #d8dee9;
+
+  /* Aurora */
+  --red: #bf616a;
+  --orange: #d08770;
+  --yellow: #ebcb8b;
+  --green: #a3be8c;
+  --purple: #b48ead;
+
+  /* Frost */
+  --blue1: #b5d2d9;
+  --blue2: #81a1c1;
+  --blue3: #5e81ac;
+
+  /* Fonts */
+  --headerFont: 'Hammersmith One', Roboto, Helvetica, Arial, sans-serif;
+  --primaryFont: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+  --ease: cubic-bezier(0, 0.6, 0.3, 1);
+
+  /* semantic */
+  --bg: var(--darkest1);
+  --fg: var(--lightest1);
+  --muted: var(--lightest3);
+  --surface: var(--darkest2);
+  --border: var(--darkest3);
+  --accent: var(--blue1);
+  --danger: var(--red);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--primaryFont);
+  font-size: 14px;
+  overflow: hidden;
+}
+
+input,
+button,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+button {
+  cursor: pointer;
+}
+
+dialog {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  min-width: 280px;
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* topbar — always visible, shows the active plan name */
+#topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  height: 40px;
+}
+
+#topbar button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: var(--headerFont);
+  font-size: 16px;
+  letter-spacing: 0.5px;
+  cursor: default;
+}
+
+#m-view {
+  display: none;
+}
+
+body.touch #m-palette {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+body.touch #m-view {
+  display: inline-block;
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+/* board */
+#board {
+  height: calc(100vh - 41px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  outline: none;
+}
+
+body.dragging-scroll #board,
+body.dragging-scroll .entries {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.list {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: calc(100vh - 73px);
+  overflow: hidden;
+}
+
+.list[data-selected] {
+  border-color: var(--accent);
+}
+
+.list[data-list-selected] .list-name {
+  background: var(--darkest3);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.list-name {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--headerFont);
+  font-size: 16px;
+  letter-spacing: 0.5px;
+}
+
+.list-name input {
+  width: 100%;
+}
+
+.list-name:empty::after {
+  content: "—";
+  color: var(--muted);
+}
+
+.entries {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 4px;
+}
+
+.entry {
+  padding: 6px 8px;
+  border-radius: 4px;
+  word-break: break-word;
+  cursor: pointer;
+}
+
+.entry[data-selected] {
+  background: var(--darkest3);
+  outline: 1px solid var(--accent);
+}
+
+.entry input {
+  width: 100%;
+}
+
+/* hide list scrollbars while dragging entries between lists */
+body.dragging .entries {
+  scrollbar-width: none;
+}
+
+body.dragging .entries::-webkit-scrollbar {
+  display: none;
+}
+
+/* single-list view: center, keep the normal column width */
+body[data-view="single"] #board {
+  justify-content: center;
+  overflow-x: hidden;
+}
+
+body[data-view="single"] #board>.list {
+  display: none;
+}
+
+body[data-view="single"] #board>.list[data-active] {
+  display: flex;
+}
+
+body[data-view="single"] #dots {
+  display: flex;
+}
+
+#dots {
+  position: fixed;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  justify-content: center;
+  gap: 6px;
+}
+
+#dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--darkest3);
+}
+
+#dots span[data-active] {
+  background: var(--accent);
+}
+
+/* default (desktop): hide mobile-only chrome */
+#actions,
+.confirm-btn {
+  display: none;
+}
+
+/* mobile (body.touch is set by JS using matchMedia OR a mobile UA) */
+body.touch #board {
+  height: calc(100vh - 100px);
+  padding: 8px;
+}
+
+body.touch #actions {
+  display: flex;
+  justify-content: space-around;
+  gap: 4px;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+body.touch #dots {
+  bottom: 60px;
+}
+
+body.touch .list {
+  flex-basis: 90vw;
+  max-width: 90vw;
+  max-height: calc(100vh - 133px);
+}
+
+body.touch .confirm-btn {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  background: var(--blue3);
+  border-color: var(--blue3);
+  color: var(--lightest1);
+  padding: 10px;
+}
+
+body.touch #palette-input {
+  display: none;
+}
+
+/* palette */
+#palette {
+  max-height: 60vh;
+}
+
+#palette-input,
+#new-plan-input {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+#palette-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+#palette-list li {
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#palette-list li[data-active] {
+  background: var(--darkest3);
+}
+
+#palette-list li[data-default]::after {
+  content: " ★";
+  color: var(--muted);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+#auth-error {
+  color: var(--danger);
+  margin: 8px 0 0;
+}
+
+.sortable-ghost {
+  opacity: 0.4;
+}
+
+.sortable-drag {
+  background: var(--darkest3);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--headerFont);
+}

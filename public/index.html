@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Plan</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-mode="normal" data-view="multi">
+
+  <dialog id="auth">
+    <form method="dialog" id="auth-form">
+      <input type="password" id="auth-input" autocomplete="current-password" autofocus required />
+      <p id="auth-error" hidden>wrong</p>
+    </form>
+  </dialog>
+
+  <header id="topbar">
+    <button type="button" id="m-palette"><span id="m-plan-name">Plan</span></button>
+    <button type="button" id="m-view">view</button>
+  </header>
+
+  <main id="board" tabindex="-1"></main>
+
+  <nav id="dots" hidden></nav>
+
+  <footer id="actions" hidden>
+    <button type="button" data-act="new-plan">+ plan</button>
+    <button type="button" data-act="del-plan" id="m-del-plan">del plan</button>
+    <button type="button" data-act="new-list">+ list</button>
+    <button type="button" data-act="edit-list">edit list</button>
+    <button type="button" data-act="del-list">del list</button>
+    <button type="button" data-act="new-entry">+ entry</button>
+  </footer>
+
+  <dialog id="palette">
+    <form method="dialog" id="palette-form">
+      <input type="text" id="palette-input" autocomplete="off" placeholder="switch plan…" />
+      <ul id="palette-list"></ul>
+    </form>
+  </dialog>
+
+  <dialog id="new-plan">
+    <form method="dialog" id="new-plan-form">
+      <input type="text" id="new-plan-input" autocomplete="off" placeholder="new plan name" />
+      <button type="submit" class="confirm-btn">Confirm</button>
+    </form>
+  </dialog>
+
+  <dialog id="confirm">
+    <form method="dialog" id="confirm-form">
+      <p id="confirm-text"></p>
+      <button type="submit" class="confirm-btn">Confirm</button>
+    </form>
+  </dialog>
+
+  <script src="/vendor/sortable.min.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
