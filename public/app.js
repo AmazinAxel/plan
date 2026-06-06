@@ -642,11 +642,11 @@ board.addEventListener("click", (e) => {
   });
   const end = (e) => {
     if (drag?.moved) board.releasePointerCapture(drag.pid);
-    // single-list desktop view: a horizontal pointer drag on empty board area cycles plans
+    // single-list desktop view: a horizontal pointer drag on empty board area cycles lists
     if (drag && drag.moved && body.dataset.view === "single" && !state.isTouch && drag.scroller === board) {
       const dx = e?.clientX != null ? e.clientX - drag.x : 0;
       const dy = e?.clientY != null ? e.clientY - drag.y : 0;
-      if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) switchPlan(dx < 0 ? 1 : -1);
+      if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) move(dx < 0 ? 1 : -1, 0);
     }
     drag = null;
     body.classList.remove("dragging-scroll");
