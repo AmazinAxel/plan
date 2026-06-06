@@ -269,7 +269,7 @@ function editEntry(listIndex, entryIndex, isNew = false) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chain = true; input.blur(); }
     else if (e.key === "Escape") {
       e.preventDefault(); cancelled = true; stopKeep();
-      if (!entry.text) list.entries.splice(entryIndex, 1);
+      if (!entry.text) { list.entries.splice(entryIndex, 1); save(); }
       setMode("normal"); render();
     }
     e.stopPropagation();
@@ -332,7 +332,7 @@ function deleteEntry() {
   if (!list || state.selection.entryIndex < 0) return;
   list.entries.splice(state.selection.entryIndex, 1);
   if (state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
-  save(); render();
+  saveNow(); render();
 }
 
 function deleteCurrentPlan() {
@@ -343,7 +343,7 @@ function deleteCurrentPlan() {
     state.data.plans = state.data.plans.filter((p) => p.id !== plan.id);
     state.data.activePlanId = state.data.plans[0].id;
     state.selection = { listIndex: 0, entryIndex: -1 };
-    save(); render();
+    saveNow(); render();
   });
 }
 
@@ -355,7 +355,7 @@ function deleteCurrentList() {
     plan.lists.splice(state.selection.listIndex, 1);
     if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
     state.selection.entryIndex = -1;
-    save(); render();
+    saveNow(); render();
   };
   if (list.entries.length === 0) { doDelete(); return; }
   confirmModal(`delete list "${list.name || "—"}"?`, doDelete);
@@ -707,8 +707,6 @@ function setupTouch() {
 
   board.addEventListener("click", (e) => { if (e.target === board) setMode("normal"); });
 
-  // tap a list's header → select; double-tap → edit the name (replaces the old edit-list button)
-  let lastListTap = { idx: -1, time: 0 };
   board.addEventListener("click", (e) => {
     const name = e.target.closest(".list-name");
     if (!name) return;
@@ -717,18 +715,10 @@ function setupTouch() {
     if (li < 0) return;
     state.selection.listIndex = li;
     state.selection.entryIndex = -1;
-    const now = Date.now();
-    if (lastListTap.idx === li && now - lastListTap.time < 300) {
-      lastListTap = { idx: -1, time: 0 };
-      render();
-      editList(li);
-    } else {
-      lastListTap = { idx: li, time: now };
-      render();
-    }
+    render();
+    editList(li);
   });
 
-  let lastTap = { id: null, time: 0 };
   board.addEventListener("click", (e) => {
     const entry = e.target.closest(".entry");
     if (!entry) return;
@@ -736,10 +726,8 @@ function setupTouch() {
     const li = [...board.querySelectorAll(".list")].indexOf(sec);
     const ei = [...sec.querySelectorAll(".entry")].indexOf(entry);
     state.selection.listIndex = li; state.selection.entryIndex = ei;
-    const now = Date.now();
-    if (lastTap.id === entry.dataset.entryId && now - lastTap.time < 300) {
-      editEntry(li, ei); lastTap = { id: null, time: 0 };
-    } else { lastTap = { id: entry.dataset.entryId, time: now }; render(); }
+    render();
+    editEntry(li, ei);
   });
 
   let touchStart = null;

@@ -124,7 +124,7 @@ body.touch #m-view {
   color: var(--lightest1);
 }
 
-@media (max-width: 500px) {
+@media (max-width: 400px) {
   #topbar {
     justify-content: flex-start;
   }
@@ -203,6 +203,9 @@ body.dragging-scroll .entries {
   margin: 0;
   padding: 0;
   min-height: 4px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .entry {
@@ -308,6 +311,10 @@ body[data-view="single"] #dots {
   display: flex;
 }
 
+body[data-view="multi"] #dots {
+  display: none;
+}
+
 #dots {
   position: fixed;
   bottom: 12px;
@@ -335,9 +342,22 @@ body[data-view="single"] #dots {
 }
 
 /* mobile (body.touch is set by JS using matchMedia OR a mobile UA) */
+body.touch {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+body.touch #topbar,
+body.touch #dots,
+body.touch #actions {
+  flex: 0 0 auto;
+}
+
 body.touch #board {
-  height: calc(100vh - 200px);
-  padding: 8px;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
 }
 
 body.touch #actions {
@@ -346,10 +366,7 @@ body.touch #actions {
   justify-content: center;
   align-content: center;
   gap: 6px;
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  position: static;
   padding: 10px;
   border-top: 0.2rem solid var(--border);
   background: var(--surface);
@@ -364,13 +381,13 @@ body.touch #actions button {
 }
 
 body.touch #dots {
-  bottom: 160px;
+  position: static;
+  padding: 6px 0;
 }
 
 body.touch .list {
-  flex-basis: 90vw;
-  max-width: 90vw;
-  max-height: calc(100vh - 230px);
+  max-width: calc(100vw - 32px);
+  max-height: 100%;
 }
 
 body.touch .confirm-btn {
