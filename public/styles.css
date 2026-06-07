@@ -215,6 +215,10 @@ body.dragging-scroll .entries {
   cursor: pointer;
 }
 
+.entries > .entry:first-child {
+  margin-top: 0.2rem;
+}
+
 .entry[data-todo] {
   background: var(--blue3);
   color: var(--lightest1);

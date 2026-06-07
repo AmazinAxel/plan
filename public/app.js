@@ -427,7 +427,16 @@ function scrollSelectionIntoView() {
   const sec = board.querySelectorAll(".list")[state.selection.listIndex];
   if (sec) sec.scrollIntoView({ behavior: "instant", inline: "nearest", block: "nearest" });
   const sel = board.querySelector(".entry[data-selected]");
-  if (sel) sel.scrollIntoView({ behavior: "instant", block: "nearest" });
+  if (sel) {
+    const scroller = sel.closest(".entries");
+    if (scroller) {
+      const target = sel.offsetTop - (scroller.clientHeight / 2) + (sel.offsetHeight / 2);
+      const max = scroller.scrollHeight - scroller.clientHeight;
+      scroller.scrollTop = Math.max(0, Math.min(max, target));
+    } else {
+      sel.scrollIntoView({ behavior: "instant", block: "center" });
+    }
+  }
 }
 
 // ---------- modals ----------
