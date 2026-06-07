@@ -215,7 +215,7 @@ body.dragging-scroll .entries {
   cursor: pointer;
 }
 
-.entries > .entry:first-child {
+.entries>.entry:first-child {
   margin-top: 0.2rem;
 }
 
@@ -321,7 +321,7 @@ body[data-view="multi"] #dots {
 
 #dots {
   position: fixed;
-  bottom: 12px;
+  bottom: 4px;
   left: 0;
   right: 0;
   justify-content: center;
