@@ -64,6 +64,10 @@ function render() {
   const list = plan.lists[state.selection.listIndex];
   if (list && state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
 
+  // Preserve per-list scroll positions across the innerHTML rebuild.
+  const scrolls = {};
+  board.querySelectorAll(".entries").forEach((ul) => { scrolls[ul.dataset.listId] = ul.scrollTop; });
+  const boardScrollLeft = board.scrollLeft;
   board.innerHTML = "";
   plan.lists.forEach((l, li) => {
     const el = document.createElement("section");
@@ -95,7 +99,9 @@ function render() {
     });
     el.appendChild(ul);
     board.appendChild(el);
+    if (scrolls[l.id] != null) ul.scrollTop = scrolls[l.id];
   });
+  board.scrollLeft = boardScrollLeft;
 
   renderDots(plan);
   attachSortables();
@@ -430,7 +436,9 @@ function scrollSelectionIntoView() {
   if (sel) {
     const scroller = sel.closest(".entries");
     if (scroller) {
-      const target = sel.offsetTop - (scroller.clientHeight / 2) + (sel.offsetHeight / 2);
+      const sRect = scroller.getBoundingClientRect();
+      const eRect = sel.getBoundingClientRect();
+      const target = scroller.scrollTop + (eRect.top - sRect.top) - (scroller.clientHeight / 2) + (eRect.height / 2);
       const max = scroller.scrollHeight - scroller.clientHeight;
       scroller.scrollTop = Math.max(0, Math.min(max, target));
     } else {
