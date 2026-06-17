@@ -26,12 +26,14 @@ Stored as a single JSON blob at KV key `data`. `src/plan-store.ts` is the only t
 - Cookie: `session=<HMAC-SHA256("v1", secret)>`, HttpOnly, Secure, SameSite=Strict, Max-Age=31536000000 (~1000y).
 - Cookie carries no per-user state. Rotating `auth:secret` invalidates all sessions. No KV reads per API call beyond fetching the secret.
 - Constant-time compare for both password hash and cookie token.
+- **Turnstile** gates `/api/auth`: the client sends the widget token alongside the password; the worker verifies it via `challenges.cloudflare.com/turnstile/v0/siteverify` (secret in `TURNSTILE_SECRET` — a Worker secret, set with `wrangler secret put TURNSTILE_SECRET`) before looking at the password. Site key (public) lives in `index.html`'s `.cf-turnstile[data-sitekey]`. The frontend resets the widget on any failure since tokens are single-use.
+- **Rate limit**: `/api/auth` allows `RL_MAX` (3) attempts per IP per hour (fixed window in KV at `rl:auth:<ip>` = `{count, resetAt}`, keyed on `CF-Connecting-IP`). Order is Turnstile → rate-limit increment → password, so only valid-token submissions spend an attempt. Exceeding returns `429` with `Retry-After`.
 
 ## API
 
 | Method | Path        | Behavior                                              |
 |--------|-------------|-------------------------------------------------------|
-| POST   | `/api/auth` | Check password, set cookie                            |
+| POST   | `/api/auth` | Verify Turnstile, rate-limit, check password, set cookie (403 bad challenge / 429 too many) |
 | GET    | `/api/me`   | 204 if cookie valid, 401 otherwise                    |
 | GET    | `/api/data` | Return full blob (seeds on first read if missing)     |
 | PUT    | `/api/data` | Replace full blob; enforces `Plan` plan exists        |
@@ -74,14 +76,15 @@ Four concerns, in this order in the file:
 - Confirm-style dialogs render a `Confirm` submit button; hidden on desktop (Enter routes through `form.requestSubmit()`), visible on mobile.
 - Swipe horizontally on the board → switch list.
 - Tap empty space → normal mode.
-- Tap entry: selects + visually highlights. Double-tap within 300ms → edit. Pressing the soft-keyboard Enter while editing commits and immediately opens a fresh entry below — fast bulk entry.
+- Tap entry: selects + visually highlights. Double-tap within 300ms → edit. Soft-keyboard Enter while editing commits, and may open a fresh entry below depending on the chain rule: editing an *existing* entry + Enter makes one new entry, but Enter on that new entry stops (no runaway chaining). A chain that began from an explicit add (new list's first entry) keeps spawning entries on each Enter — fast bulk entry. The `chainable` flag threaded through `newEntryBelow`/`editEntry` carries this distinction; desktop is unaffected (only new entries chain).
 - Tap a list's header (`.list-name`) to select that list (`entryIndex = -1`); useful in multi-list view for picking a list to edit or delete.
-- Bottom action bar exposes `new-plan`, `new-list`, `edit-list`, `del-list`, `new-entry`.
+- Bottom action bar exposes `del-plan`, `new-list`, `del-list`, `toggle-todo` (the last mirrors desktop `Tab` — mark/unmark the selected entry). New plans are created from the palette's `<New plan>` row, not the action bar.
+- Single-list view wraps when paging past either end (swipe / arrows / desktop drag-cycle all route through `move`); multi-list view clamps.
 - All modal dialogs close on backdrop tap.
 
 ## Styling — `public/styles.css`
 
-Nord palette is exposed as CSS custom properties (`--darkest1`..`--darkest4`, `--lightest1`..`--lightest3`, `--red`/`--orange`/`--yellow`/`--green`/`--purple`, `--blue1`/`--blue2`/`--blue3`) plus semantic aliases (`--bg`, `--fg`, `--surface`, `--border`, `--accent`, `--danger`) and fonts (`--headerFont`, `--primaryFont`, `--ease`). Fonts are loaded from Google Fonts (Hammersmith One + Sora). The file ships with only the bare layout required: board scroll, dialogs, single-view centering, dot indicators. Extend here.
+Nord palette is exposed as CSS custom properties (`--darkest1`..`--darkest4`, `--lightest1`..`--lightest3`, `--red`/`--orange`/`--yellow`/`--green`/`--purple`, `--blue1`/`--blue2`/`--blue3`) plus semantic aliases (`--bg`, `--fg`, `--surface`, `--border`, `--accent`, `--danger`) and fonts (`--headerFont`, `--primaryFont`, `--ease`). Fonts (Hammersmith One + Sora) are self-hosted as `@font-face` rules pointing at `public/fonts/*.woff2` — served first-party by the Worker's ASSETS binding, no Google Fonts dependency. Sora is a variable font, so one file covers weights 300–600. To update a font, re-pull the woff2 from Google's CSS (with a modern browser UA) and replace the file. The file ships with only the bare layout required: board scroll, dialogs, single-view centering, dot indicators. Extend here.
 
 The "no buttons on desktop" rule lives in CSS:
 
@@ -102,4 +105,4 @@ If you find yourself adding a desktop button, you're doing it wrong — bind a k
 
 ## Cloudflare reference
 
-`npx wrangler dev` to develop, `npx wrangler deploy` to ship, `npx wrangler types` after binding changes. Workers docs: https://developers.cloudflare.com/workers/. KV docs: https://developers.cloudflare.com/kv/.
+There is no local dev loop — everything runs in production. `npx wrangler deploy` to ship, `npx wrangler types` after binding changes, `npx wrangler secret put TURNSTILE_SECRET` to set the Turnstile secret. Workers docs: https://developers.cloudflare.com/workers/. KV docs: https://developers.cloudflare.com/kv/.

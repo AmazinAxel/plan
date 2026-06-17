@@ -1,28 +1,24 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>Plan</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="icon" type="image/png" href="/planning.png" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" type="image/png" href="/planning.png"/>
+  <link rel="stylesheet" href="/styles.css"/>
 </head>
-
 <body data-mode="normal" data-view="multi">
-
   <dialog id="auth">
     <form method="dialog" id="auth-form">
-      <input type="password" id="auth-input" autocomplete="current-password" autofocus required />
-      <p id="auth-error" hidden>wrong</p>
+      <input type="password" id="auth-input" autocomplete="current-password" autofocus required/>
+      <div class="cf-turnstile" data-sitekey="0x4AAAAAADmOHNeKiMjmstjX"></div>
+      <p id="auth-error" hidden>Incorrect</p>
     </form>
   </dialog>
 
   <header id="topbar">
     <button type="button" id="m-palette"><span id="m-plan-name">Plan</span></button>
-    <button type="button" id="m-view">toggle view</button>
+    <button type="button" id="m-view">Toggle view</button>
   </header>
 
   <main id="board" tabindex="-1"></main>
@@ -30,23 +26,22 @@
   <nav id="dots" hidden></nav>
 
   <footer id="actions" hidden>
-    <button type="button" data-act="new-plan">+ new plan</button>
-    <button type="button" data-act="del-plan" id="m-del-plan">- del plan</button>
-    <button type="button" data-act="new-list">+ new list</button>
-    <button type="button" data-act="del-list">- del list</button>
-    <button type="button" data-act="new-entry">+ entry</button>
+    <button type="button" data-act="new-list">New list</button>
+    <button type="button" data-act="del-plan" id="m-del-plan">Delete plan</button>
+    <button type="button" data-act="del-list">Delete list</button>
+    <button type="button" data-act="toggle-todo">Toggle todo</button>
   </footer>
 
   <dialog id="palette">
     <form method="dialog" id="palette-form">
-      <input type="text" id="palette-input" autocomplete="off" placeholder="switch plan…" />
+      <input type="text" id="palette-input" autocomplete="off" placeholder="Search"/>
       <ul id="palette-list"></ul>
     </form>
   </dialog>
 
   <dialog id="new-plan">
     <form method="dialog" id="new-plan-form">
-      <input type="text" id="new-plan-input" autocomplete="off" placeholder="new plan name" />
+      <input type="text" id="new-plan-input" autocomplete="off" placeholder="New plan name"/>
       <button type="submit" class="confirm-btn">Confirm</button>
     </form>
   </dialog>
@@ -60,13 +55,13 @@
 
   <dialog id="bg">
     <form method="dialog" id="bg-form">
-      <input type="url" id="bg-input" autocomplete="off" placeholder="background image URL (empty to clear)" />
+      <input type="url" id="bg-input" autocomplete="off" placeholder="Background image URL"/>
       <button type="submit" class="confirm-btn">Confirm</button>
     </form>
   </dialog>
 
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
-
 </html>

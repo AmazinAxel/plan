@@ -4,6 +4,43 @@ import { getData, putData, type Data } from "./src/plan-store";
 interface Env {
   PLAN_KV: KVNamespace;
   ASSETS: Fetcher;
+  TURNSTILE_SECRET: string;
+}
+
+// Rate limits
+const RL_MAX = 3;
+const RL_WINDOW_MS = 60 * 60 * 1000;
+
+function clientIp(req: Request): string {
+  return req.headers.get("CF-Connecting-IP") || "unknown";
+}
+
+async function rateLimit(env: Env, ip: string): Promise<{ ok: boolean; retryAfter: number }> {
+  const key = `rl:auth:${ip}`;
+  const now = Date.now();
+  const raw = await env.PLAN_KV.get(key);
+  let rec = raw ? (JSON.parse(raw) as { count: number; resetAt: number }) : null;
+  if (!rec || now >= rec.resetAt) rec = { count: 0, resetAt: now + RL_WINDOW_MS };
+  if (rec.count >= RL_MAX) return { ok: false, retryAfter: Math.ceil((rec.resetAt - now) / 1000) };
+  rec.count += 1;
+  const ttl = Math.max(60, Math.ceil((rec.resetAt - now) / 1000)); // KV min TTL is 60s
+  await env.PLAN_KV.put(key, JSON.stringify(rec), { expirationTtl: ttl });
+  return { ok: true, retryAfter: 0 };
+}
+
+async function verifyTurnstile(token: string, secret: string, ip: string): Promise<boolean> {
+  if (!token) return false;
+  const form = new FormData();
+  form.append("secret", secret);
+  form.append("response", token);
+  if (ip && ip !== "unknown") form.append("remoteip", ip);
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    body: form
+  });
+  if (!res.ok) return false;
+  const data = (await res.json()) as { success?: boolean };
+  return data.success === true;
 }
 
 const json = (body: unknown, init: ResponseInit = {}) =>
@@ -23,10 +60,23 @@ async function getHash(env: Env): Promise<string | null> {
 async function handleAuth(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return new Response(null, { status: 405 });
   const [hash, secret] = await Promise.all([getHash(env), getSecret(env)]);
-  if (!hash || !secret) return json({ error: "server not initialized" }, { status: 503 });
-  let body: { password?: unknown };
+  if (!hash || !secret || !env.TURNSTILE_SECRET) return json({ error: "server not initialized" }, { status: 503 });
+  let body: { password?: unknown; turnstile?: unknown };
   try { body = await req.json(); } catch { return json({ error: "bad body" }, { status: 400 }); }
   if (typeof body.password !== "string") return json({ error: "bad body" }, { status: 400 });
+
+  const ip = clientIp(req);
+
+  const token = typeof body.turnstile === "string" ? body.turnstile : "";
+  if (!(await verifyTurnstile(token, env.TURNSTILE_SECRET, ip))) {
+    return json({ error: "challenge failed" }, { status: 403 });
+  }
+
+  const rl = await rateLimit(env, ip);
+  if (!rl.ok) {
+    return json({ error: "too many attempts" }, { status: 429, headers: { "Retry-After": String(rl.retryAfter) } });
+  }
+
   if (!(await checkPassword(body.password, hash))) {
     return json({ error: "invalid" }, { status: 401 });
   }

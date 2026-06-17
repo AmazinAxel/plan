@@ -1,5 +1,3 @@
-// Plan — keyboard-driven planning app. See AGENTS.md for the operating manual.
-
 const $ = (id) => document.getElementById(id);
 const body = document.body;
 const board = $("board");
@@ -8,7 +6,7 @@ const state = {
   data: { activePlanId: "", plans: [] },
   selection: { listIndex: 0, entryIndex: -1 },
   isTouch: matchMedia("(hover: none) and (pointer: coarse)").matches
-    || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+    || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 };
 
 const uuid = () => crypto.randomUUID();
@@ -37,7 +35,7 @@ async function flushSave() {
   await fetch("/api/data", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cleaned),
+    body: JSON.stringify(cleaned)
   });
 }
 function save() {
@@ -153,7 +151,7 @@ function attachSortables() {
       plan.lists.splice(ev.newIndex, 0, moved);
       state.selection.listIndex = ev.newIndex;
       save(); render();
-    },
+    }
   }));
 
   board.querySelectorAll(".entries").forEach((ul) => {
@@ -177,7 +175,7 @@ function attachSortables() {
         state.selection.listIndex = plan.lists.indexOf(toList);
         state.selection.entryIndex = ev.newIndex;
         save(); render();
-      },
+      }
     }));
   });
 }
@@ -218,7 +216,7 @@ function editList(listIndex, isNew = false) {
     list.name = input.value.trim();
     save();
     setMode("normal"); render();
-    if (list.entries.length === 0) newEntryBelow();
+    if (list.entries.length === 0) newEntryBelow(true);
   };
   const cancel = () => {
     stopKeep();
@@ -239,7 +237,7 @@ function editList(listIndex, isNew = false) {
   });
 }
 
-function editEntry(listIndex, entryIndex, isNew = false) {
+function editEntry(listIndex, entryIndex, isNew = false, chainable = false) {
   const plan = activePlan();
   const list = plan.lists[listIndex];
   if (!list) return;
@@ -268,11 +266,18 @@ function editEntry(listIndex, entryIndex, isNew = false) {
     else list.entries.splice(entryIndex, 1);
     save();
     setMode("normal"); render();
-    if (chain && v && isNew) newEntryBelow();
+    if (chain && v) {
+      const nextChainable = state.isTouch ? (isNew && chainable) : true;
+      newEntryBelow(nextChainable);
+    }
   };
   input.addEventListener("blur", () => { if (!cancelled) commit(); });
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chain = true; input.blur(); }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      chain = state.isTouch ? (isNew ? chainable : true) : isNew;
+      input.blur();
+    }
     else if (e.key === "Escape") {
       e.preventDefault(); cancelled = true; stopKeep();
       if (!entry.text) { list.entries.splice(entryIndex, 1); save(); }
@@ -304,7 +309,7 @@ function switchPlan(dir) {
   render();
 }
 
-function newEntryBelow() {
+function newEntryBelow(chainable = false) {
   const plan = activePlan();
   const list = plan.lists[state.selection.listIndex];
   if (!list) return;
@@ -314,7 +319,7 @@ function newEntryBelow() {
   state.selection.entryIndex = at;
   save();
   render();
-  editEntry(state.selection.listIndex, at, true);
+  editEntry(state.selection.listIndex, at, true, chainable);
 }
 
 function toggleTodo() {
@@ -373,7 +378,11 @@ function move(dx, dy) {
   const plan = activePlan();
   if (!plan || plan.lists.length === 0) return;
   if (dx) {
-    state.selection.listIndex = Math.max(0, Math.min(plan.lists.length - 1, state.selection.listIndex + dx));
+    const n = plan.lists.length;
+    let next = state.selection.listIndex + dx;
+    // Single-list view wraps around either end; multi-list view clamps.
+    next = body.dataset.view === "single" ? ((next % n) + n) % n : Math.max(0, Math.min(n - 1, next));
+    state.selection.listIndex = next;
     const list = plan.lists[state.selection.listIndex];
     if (list && state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
   }
@@ -766,11 +775,10 @@ function setupTouch() {
     const act = e.target.dataset.act;
     if (!act) return;
     ({
-      "new-plan": openNewPlan,
       "del-plan": deleteCurrentPlan,
       "new-list": newList,
       "del-list": deleteCurrentList,
-      "new-entry": newEntryBelow,
+      "toggle-todo": toggleTodo
     })[act]?.();
   });
   $("m-palette").addEventListener("click", openPalette);
@@ -799,13 +807,17 @@ function showAuth() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     err.hidden = true;
+
+    const token = form.querySelector('[name="cf-turnstile-response"]')?.value || "";
     const res = await fetch("/api/auth", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: input.value }),
+      body: JSON.stringify({ password: input.value, turnstile: token })
     });
     if (res.ok) { dlg.close(); await loadData(); }
-    else { err.hidden = false; input.select(); }
+    // Any failure (wrong password, failed challenge, rate-limited) consumes the
+    // token, so reset the widget to mint a fresh one for the next try.
+    else { err.hidden = false; input.select(); window.turnstile?.reset(); }
   });
 }
 

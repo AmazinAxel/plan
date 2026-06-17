@@ -6,14 +6,7 @@ beta app made w/ Claude
 
 ---
 
-## Local dev
-
-```sh
-bun install        # or npm install
-bun run dev
-```
-
-`wrangler dev` reads from the production KV namespace (`remote: true` in `wrangler.jsonc`), so use the same password you seeded into prod. No local seeding step.
+Everything runs in production — there's no local dev loop. Install deps with `bun install` (or `npm install`), then deploy.
 
 ## Deploy to Cloudflare
 
@@ -41,7 +34,12 @@ bun run dev
    bunx wrangler kv key put --binding=PLAN_KV --remote auth:secret 'PASTE_SECRET'
    ```
 
-4. **Deploy:**
+4. **Set the Turnstile secret key** (the private one; the public site key goes in `public/index.html`'s `.cf-turnstile[data-sitekey]`):
+   ```sh
+   bunx wrangler secret put TURNSTILE_SECRET
+   ```
+
+5. **Deploy:**
    ```sh
    bun run deploy
    ```
@@ -53,7 +51,6 @@ To rotate the password or invalidate every existing session, overwrite the corre
 
 | Script             | Purpose                                |
 |--------------------|----------------------------------------|
-| `bun run dev`      | Local Wrangler dev (seeds local KV)    |
 | `bun run deploy`   | Publish to Cloudflare                  |
 | `bun run typecheck`| `tsc --noEmit`                         |
 
@@ -73,7 +70,7 @@ To rotate the password or invalidate every existing session, overwrite the corre
 
 | Method | Path        | Notes                                              |
 |--------|-------------|----------------------------------------------------|
-| POST   | `/api/auth` | `{ password }` → 204 + `Set-Cookie session=…`      |
+| POST   | `/api/auth` | `{ password, turnstile }` → 204 + `Set-Cookie session=…` (403 bad challenge / 429 rate-limited) |
 | GET    | `/api/me`   | 204 if authed, 401 otherwise                       |
 | GET    | `/api/data` | The full `Data` blob                               |
 | PUT    | `/api/data` | Replace the full `Data` blob                       |
