@@ -104,7 +104,7 @@ function render() {
       it.className = "entry";
       it.dataset.entryId = e.id;
       it.textContent = e.text;
-      if (/^-{3,}(\s.*\s-{3,})?$/.test(e.text)) it.dataset.sep = "";
+      if (/^-{2,}(\s.*\s-{2,})?$/.test(e.text)) it.dataset.sep = "";
       if (e.todo) it.dataset.todo = "";
       if (li === state.selection.listIndex && ei === state.selection.entryIndex) it.dataset.selected = "";
       ul.appendChild(it);
