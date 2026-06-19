@@ -110,10 +110,19 @@ export default {
         if (req.method === "PUT") {
           let body: Data;
           try { body = await req.json(); } catch { return json({ error: "bad body" }, { status: 400 }); }
-          try { await putData(env.PLAN_KV, body); } catch (e) {
+          // Optimistic concurrency: a write must declare the version it was based
+          // on. If that's behind what's stored, another device wrote first, so we
+          // reject with 409 + the current data instead of clobbering it.
+          const current = await getData(env.PLAN_KV);
+          const expected = req.headers.get("X-Plan-Version");
+          if (expected !== null && expected !== String(current.version)) {
+            return json(current, { status: 409, headers: { "X-Plan-Version": String(current.version) } });
+          }
+          const next = { ...body, version: current.version + 1 };
+          try { await putData(env.PLAN_KV, next); } catch (e) {
             return json({ error: (e as Error).message }, { status: 400 });
           }
-          return new Response(null, { status: 204 });
+          return new Response(null, { status: 204, headers: { "X-Plan-Version": String(next.version) } });
         }
         return new Response(null, { status: 405 });
       }

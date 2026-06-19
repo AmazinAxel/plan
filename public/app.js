@@ -32,11 +32,24 @@ async function flushSave() {
   cleaned.plans.forEach((p) => p.lists.forEach((l) => {
     l.entries = l.entries.filter((e) => e.text && e.text.trim());
   }));
-  await fetch("/api/data", {
+  const res = await fetch("/api/data", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Plan-Version": String(state.data.version ?? 0)
+    },
     body: JSON.stringify(cleaned)
   });
+  if (res.status === 409) {
+    // Another device wrote first. Adopt the server's state rather than
+    // clobbering it; this tab's pending change is dropped.
+    applyRemote(await res.json());
+    return;
+  }
+  if (res.ok) {
+    const v = res.headers.get("X-Plan-Version");
+    if (v) state.data.version = Number(v);
+  }
 }
 function save() {
   savePending = true;
@@ -830,6 +843,32 @@ async function loadData() {
   render();
   board.focus();
 }
+
+// ---------- cross-device sync ----------
+// Replace in-memory state with a fresh server snapshot and repaint. Selection
+// lives in state.selection (not in the data blob), so render() re-clamps it.
+function applyRemote(remote) {
+  state.data = remote;
+  render();
+}
+
+// Re-fetch when this tab/window regains focus or becomes visible, so switching
+// to another device shows its latest data. Skipped while editing or with an
+// unsaved local change, to avoid stomping in-progress work.
+async function refresh() {
+  if (!state.data.plans.length) return; // not booted yet
+  if (savePending || body.dataset.mode === "insert") return;
+  let res;
+  try { res = await fetch("/api/data", { cache: "no-store" }); } catch { return; }
+  if (!res.ok) return;
+  const remote = await res.json();
+  if (remote.version !== state.data.version) applyRemote(remote);
+}
+
+window.addEventListener("focus", refresh);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refresh();
+});
 
 window.addEventListener("beforeunload", (e) => {
   if (savePending) { e.preventDefault(); e.returnValue = ""; }
