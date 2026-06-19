@@ -103,16 +103,14 @@ export default {
     if (path.startsWith("/api/")) {
       if (!(await requireAuth(req, env))) return new Response(null, { status: 401 });
 
-      if (path === "/api/me") return new Response(null, { status: 204 });
-
       if (path === "/api/data") {
         if (req.method === "GET") return json(await getData(env.PLAN_KV));
         if (req.method === "PUT") {
           let body: Data;
           try { body = await req.json(); } catch { return json({ error: "bad body" }, { status: 400 }); }
-          // Optimistic concurrency: a write must declare the version it was based
-          // on. If that's behind what's stored, another device wrote first, so we
-          // reject with 409 + the current data instead of clobbering it.
+          // Optimistic concurrency: a write declares the version it was based on;
+          // if that's stale, another device wrote first, so reject with 409 + the
+          // current data instead of clobbering it.
           const current = await getData(env.PLAN_KV);
           const expected = req.headers.get("X-Plan-Version");
           if (expected !== null && expected !== String(current.version)) {

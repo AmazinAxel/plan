@@ -14,8 +14,7 @@ const activePlan = () =>
   state.data.plans.find((p) => p.id === state.data.activePlanId) || state.data.plans[0];
 
 // ---------- persistence ----------
-// Throttled to one fetch per SAVE_INTERVAL ms. Mutations call save() freely;
-// beforeunload guards against losing a pending write.
+// Throttled to one PUT per SAVE_INTERVAL ms; beforeunload guards a pending write.
 const SAVE_INTERVAL = 5000;
 let saveTimer = null;
 let savePending = false;
@@ -26,8 +25,7 @@ async function flushSave() {
   if (!savePending) return;
   savePending = false;
   lastSaveAt = Date.now();
-  // Strip whitespace-only entries before persisting. We do this on a clone so
-  // an entry currently being edited (with empty initial text) stays in memory.
+  // Strip blank entries on a clone, so an in-progress edit survives in memory.
   const cleaned = JSON.parse(JSON.stringify(state.data));
   cleaned.plans.forEach((p) => p.lists.forEach((l) => {
     l.entries = l.entries.filter((e) => e.text && e.text.trim());
@@ -41,8 +39,7 @@ async function flushSave() {
     body: JSON.stringify(cleaned)
   });
   if (res.status === 409) {
-    // Another device wrote first. Adopt the server's state rather than
-    // clobbering it; this tab's pending change is dropped.
+    // Another device wrote first; adopt its state instead of clobbering.
     applyRemote(await res.json());
     return;
   }
@@ -75,7 +72,7 @@ function render() {
   const list = plan.lists[state.selection.listIndex];
   if (list && state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
 
-  // Preserve per-list scroll positions across the innerHTML rebuild.
+  // Preserve per-list scroll positions across the rebuild.
   const scrolls = {};
   board.querySelectorAll(".entries").forEach((ul) => { scrolls[ul.dataset.listId] = ul.scrollTop; });
   const boardScrollLeft = board.scrollLeft;
@@ -173,8 +170,7 @@ function attachSortables() {
       group: { name: "entries", pull: !singleView, put: !singleView },
       animation: 120,
       draggable: ".entry",
-      // On touch devices, require a brief hold before dragging starts. This lets
-      // a quick vertical swipe scroll the list instead of latching onto an entry.
+      // Touch: brief hold before drag, so a quick swipe scrolls instead.
       delay: 250,
       delayOnTouchOnly: true,
       touchStartThreshold: 5,
@@ -195,11 +191,11 @@ function attachSortables() {
 }
 
 // ---------- editing ----------
-// If the tab/window loses focus while editing, defer the commit until it
-// returns instead of dropping the in-flight text.
+// If focus leaves the window while editing, defer the commit until it returns
+// rather than dropping the in-flight text.
 function keepFocusOnTabSwitch(input) {
   const onBlur = (e) => {
-    if (document.hasFocus()) return; // a real interactive blur — let the caller's handler commit
+    if (document.hasFocus()) return; // real interactive blur — let the commit handler run
     e.stopImmediatePropagation();
     const onFocus = () => {
       window.removeEventListener("focus", onFocus);
@@ -207,7 +203,7 @@ function keepFocusOnTabSwitch(input) {
     };
     window.addEventListener("focus", onFocus);
   };
-  input.addEventListener("blur", onBlur, true); // capture-phase, runs before commit handler
+  input.addEventListener("blur", onBlur, true); // capture-phase: runs before commit
   return () => input.removeEventListener("blur", onBlur, true);
 }
 
@@ -312,17 +308,6 @@ function newList() {
   editList(state.selection.listIndex, true);
 }
 
-function switchPlan(dir) {
-  if (state.data.plans.length < 2) return;
-  const idx = state.data.plans.findIndex((p) => p.id === state.data.activePlanId);
-  const next = Math.max(0, Math.min(state.data.plans.length - 1, idx + dir));
-  if (next === idx) return;
-  state.data.activePlanId = state.data.plans[next].id;
-  state.selection = { listIndex: 0, entryIndex: -1 };
-  save();
-  render();
-}
-
 function newEntryBelow(chainable = false) {
   const plan = activePlan();
   const list = plan.lists[state.selection.listIndex];
@@ -344,7 +329,7 @@ function toggleTodo() {
   if (entry.todo) {
     delete entry.todo;
   } else {
-    // Only one todo per list — clear any other before marking this one.
+    // Only one todo per list.
     list.entries.forEach((x) => { delete x.todo; });
     entry.todo = true;
   }
@@ -363,7 +348,7 @@ function deleteEntry() {
 function deleteCurrentPlan() {
   const plan = activePlan();
   if (!plan) return;
-  if (plan.name === "Plan") return; // protected
+  if (plan.name === "Plan") return; // the default plan is protected
   confirmModal(`delete plan "${plan.name || "—"}"?`, () => {
     state.data.plans = state.data.plans.filter((p) => p.id !== plan.id);
     state.data.activePlanId = state.data.plans[0].id;
@@ -394,7 +379,7 @@ function move(dx, dy) {
   if (dx) {
     const n = plan.lists.length;
     let next = state.selection.listIndex + dx;
-    // Single-list view wraps around either end; multi-list view clamps.
+    // Single-list view wraps; multi-list view clamps.
     next = body.dataset.view === "single" ? ((next % n) + n) % n : Math.max(0, Math.min(n - 1, next));
     state.selection.listIndex = next;
     const list = plan.lists[state.selection.listIndex];
@@ -404,12 +389,12 @@ function move(dx, dy) {
     const list = plan.lists[state.selection.listIndex];
     if (!list || list.entries.length === 0) { state.selection.entryIndex = -1; }
     else if (state.selection.entryIndex === -1) {
-      // Coming from the list header: up jumps to the last entry, down to the first.
+      // From the header: up jumps to the last entry, down to the first.
       state.selection.entryIndex = dy > 0 ? 0 : list.entries.length - 1;
     }
     else {
       const next = state.selection.entryIndex + dy;
-      // Up off the first entry highlights the header; down off the last wraps to the top.
+      // Up off the first entry selects the header; down off the last wraps to top.
       if (next < 0) state.selection.entryIndex = -1;
       else if (next >= list.entries.length) state.selection.entryIndex = 0;
       else state.selection.entryIndex = next;
@@ -517,7 +502,7 @@ function openPalette() {
   setMode("palette");
 
   const matching = () => state.data.plans.filter((p) => !input.value || fuzzyMatch(input.value, p.name));
-  // The "<New plan>" row is appended after all matches, at index `matches.length`.
+  // "<New plan>" is appended after all matches, at index matches.length.
   const refresh = () => {
     const matches = matching();
     const total = matches.length + 1;
@@ -582,7 +567,7 @@ function openNewPlan(seedName = "") {
   const dlg = $("new-plan");
   const input = $("new-plan-input");
   input.value = seedName;
-  setMode("palette"); // same "modal-open" state for the global key handler
+  setMode("palette"); // reuse the modal-open state for the global key handler
 
   let created = false;
   const submit = () => {
@@ -685,7 +670,7 @@ board.addEventListener("click", (e) => {
   });
   const end = (e) => {
     if (drag?.moved) board.releasePointerCapture(drag.pid);
-    // single-list desktop view: a horizontal pointer drag on empty board area cycles lists
+    // Single-list desktop view: a horizontal drag on empty board area cycles lists.
     if (drag && drag.moved && body.dataset.view === "single" && !state.isTouch && drag.scroller === board) {
       const dx = e?.clientX != null ? e.clientX - drag.x : 0;
       const dy = e?.clientY != null ? e.clientY - drag.y : 0;
@@ -782,8 +767,8 @@ function setupTouch() {
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
     touchStart = null;
-    // In single-list view, swipe cycles through LISTS in the current plan.
-    // Plan switching on mobile is intentional only — via the plan-name button → palette.
+    // Single-list view: swipe cycles lists. Plan switching on mobile is
+    // deliberate-only, via the plan-name button → palette.
     if (body.dataset.view !== "single") return;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) move(dx < 0 ? 1 : -1, 0);
   });
@@ -805,14 +790,20 @@ function setupTouch() {
   });
 }
 
-// dialog backdrop click closes (mobile expectation)
+// Backdrop click closes a dialog (mobile expectation).
 ["palette", "new-plan", "confirm", "bg"].forEach((id) => attachBackdropClose($(id)));
 
 // ---------- auth + boot ----------
-async function boot() {
-  const me = await fetch("/api/me");
-  if (me.status === 401) { showAuth(); return; }
-  await loadData();
+// Turnstile is only needed in the auth dialog, so load it on demand — the common
+// authed load then makes no connection to challenges.cloudflare.com.
+let turnstileLoaded = false;
+function loadTurnstile() {
+  if (turnstileLoaded) { window.turnstile?.reset(); return; }
+  turnstileLoaded = true;
+  const s = document.createElement("script");
+  s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
+  s.async = true; s.defer = true;
+  document.head.appendChild(s);
 }
 
 function showAuth() {
@@ -820,6 +811,7 @@ function showAuth() {
   const form = $("auth-form");
   const input = $("auth-input");
   const err = $("auth-error");
+  loadTurnstile();
   dlg.showModal();
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -832,8 +824,7 @@ function showAuth() {
       body: JSON.stringify({ password: input.value, turnstile: token })
     });
     if (res.ok) { dlg.close(); await loadData(); }
-    // Any failure (wrong password, failed challenge, rate-limited) consumes the
-    // token, so reset the widget to mint a fresh one for the next try.
+    // Any failure consumes the token, so reset the widget for a fresh one.
     else { err.hidden = false; input.select(); window.turnstile?.reset(); }
   });
 }
@@ -849,16 +840,15 @@ async function loadData() {
 }
 
 // ---------- cross-device sync ----------
-// Replace in-memory state with a fresh server snapshot and repaint. Selection
-// lives in state.selection (not in the data blob), so render() re-clamps it.
+// Swap in a fresh server snapshot and repaint. Selection lives outside the data
+// blob (in state.selection), so render() re-clamps it.
 function applyRemote(remote) {
   state.data = remote;
   render();
 }
 
-// Re-fetch when this tab/window regains focus or becomes visible, so switching
-// to another device shows its latest data. Skipped while editing or with an
-// unsaved local change, to avoid stomping in-progress work.
+// Re-fetch on focus/visibility so another device's edits show up. Skipped while
+// editing or with an unsaved change, to avoid stomping in-progress work.
 async function refresh() {
   if (!state.data.plans.length) return; // not booted yet
   if (savePending || body.dataset.mode === "insert") return;
@@ -878,4 +868,6 @@ window.addEventListener("beforeunload", (e) => {
   if (savePending) { e.preventDefault(); e.returnValue = ""; }
 });
 
-boot();
+// /api/data 401s when unauthed and loadData() falls back to showAuth(), so we
+// boot in a single round-trip with no separate auth probe.
+loadData();

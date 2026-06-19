@@ -1,6 +1,6 @@
-export interface Entry { id: string; text: string }
+export interface Entry { id: string; text: string; todo?: boolean }
 export interface List  { id: string; name: string; entries: Entry[] }
-export interface Plan  { id: string; name: string; lists: List[] }
+export interface Plan  { id: string; name: string; lists: List[]; background?: string }
 export interface Data  { activePlanId: string; plans: Plan[]; version: number }
 
 const DATA_KEY = "data";
