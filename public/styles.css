@@ -212,9 +212,16 @@ body.dragging-scroll .entries {
   background: var(--darkest3);
 }
 
+/* When the first entry is selected, the header's bottom border becomes the top
+   edge of that entry's selection outline. */
+.list[data-first-selected] .list-name {
+  border-bottom-color: var(--accent);
+}
+
 .list-name {
   padding: 10px 14px;
   border-bottom: 0.2rem solid var(--border);
+  transition: border-bottom-color 0.15s var(--ease);
   font-family: var(--headerFont);
   font-size: 22px;
   letter-spacing: 0.5px;
@@ -244,10 +251,6 @@ body.dragging-scroll .entries {
   word-break: break-word;
   white-space: pre-wrap;
   cursor: pointer;
-}
-
-.entries>.entry:first-child {
-  margin-top: 0.2rem;
 }
 
 .entry[data-todo] {

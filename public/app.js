@@ -87,6 +87,7 @@ function render() {
     if (li === state.selection.listIndex) {
       el.dataset.selected = ""; el.dataset.active = "";
       if (state.selection.entryIndex === -1) el.dataset.listSelected = "";
+      else if (state.selection.entryIndex === 0) el.dataset.firstSelected = "";
     }
 
     const name = document.createElement("div");
@@ -408,7 +409,10 @@ function move(dx, dy) {
     }
     else {
       const next = state.selection.entryIndex + dy;
-      state.selection.entryIndex = (next < 0 || next >= list.entries.length) ? -1 : next;
+      // Up off the first entry highlights the header; down off the last wraps to the top.
+      if (next < 0) state.selection.entryIndex = -1;
+      else if (next >= list.entries.length) state.selection.entryIndex = 0;
+      else state.selection.entryIndex = next;
     }
   }
   render();
