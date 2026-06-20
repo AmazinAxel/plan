@@ -414,9 +414,12 @@ function shiftMove(dx, dy) {
   if (state.selection.entryIndex >= 0) {
     const ei = state.selection.entryIndex;
     if (dy) {
-      const ni = ei + dy;
-      if (ni < 0 || ni >= list.entries.length) return;
-      [list.entries[ei], list.entries[ni]] = [list.entries[ni], list.entries[ei]];
+      const n = list.entries.length;
+      if (n < 2) return;
+      // Wrap past the ends: moving up off the top sends the entry to the bottom, and vice versa.
+      const ni = (ei + dy + n) % n;
+      const [moved] = list.entries.splice(ei, 1);
+      list.entries.splice(ni, 0, moved);
       state.selection.entryIndex = ni;
     } else if (dx) {
       const ti = state.selection.listIndex + dx;
