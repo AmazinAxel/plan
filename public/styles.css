@@ -122,6 +122,16 @@ dialog::backdrop {
   background: rgba(0, 0, 0, 0.5);
 }
 
+/* One even gap between dialog children via flex gap (not per-element margins),
+   so a hidden button contributes no space and the dialog's 16px padding stays
+   symmetric on every side, both on desktop and mobile. */
+dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+}
+
 /* topbar — always visible, shows the active plan name centered */
 #topbar {
   display: flex;
@@ -431,7 +441,6 @@ body.touch .list {
 body.touch .confirm-btn {
   display: block;
   width: 100%;
-  margin-top: 12px;
   background: var(--blue3);
   border-color: var(--blue3);
   color: var(--lightest1);
@@ -456,7 +465,6 @@ body.touch #palette-input {
 #palette-input,
 #new-plan-input {
   width: 100%;
-  margin-bottom: 8px;
 }
 
 #palette-list {

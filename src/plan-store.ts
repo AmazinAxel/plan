@@ -24,11 +24,23 @@ export function isDestructive(current: Data, next: Data): boolean {
   return false;
 }
 
+// A US/Los_Angeles timestamp formatted as mm-dd-yyyy--hh-mm (24-hour, no
+// seconds) for readable backup keys in the Cloudflare dashboard.
+function backupTimestamp(d = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(d);
+  const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
+  return `${p.month}-${p.day}-${p.year}--${p.hour}-${p.minute}`;
+}
+
 // Snapshot `data` under a timestamped, auto-expiring key. The keys appear in the
-// Cloudflare KV dashboard as `backup:<ISO timestamp>`; to restore, copy a
-// backup's value back into the `data` key.
+// Cloudflare KV dashboard as `backup:<mm-dd-yyyy--hh-mm>` (Los Angeles time); to
+// restore, copy a backup's value back into the `data` key.
 export async function backupData(kv: KVNamespace, data: Data): Promise<void> {
-  const key = `backup:${new Date().toISOString()}`;
+  const key = `backup:${backupTimestamp()}`;
   await kv.put(key, JSON.stringify(data), { expirationTtl: BACKUP_TTL_SECONDS });
 }
 
