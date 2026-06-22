@@ -442,6 +442,12 @@ body.touch #palette-input {
   display: none;
 }
 
+/* confirm dialog — even padding on all sides, centered text on desktop */
+#confirm-text {
+  margin: 0;
+  text-align: center;
+}
+
 /* palette */
 #palette {
   max-height: 60vh;

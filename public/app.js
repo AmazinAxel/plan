@@ -739,6 +739,7 @@ function setupTouch() {
   board.addEventListener("click", (e) => { if (e.target === board) setMode("normal"); });
 
   board.addEventListener("click", (e) => {
+    if (body.dataset.mode !== "normal") return; // already editing — let the field handle the tap
     const name = e.target.closest(".list-name");
     if (!name) return;
     const sec = name.closest(".list");
@@ -751,6 +752,7 @@ function setupTouch() {
   });
 
   board.addEventListener("click", (e) => {
+    if (body.dataset.mode !== "normal") return; // already editing — let the field handle the tap
     const entry = e.target.closest(".entry");
     if (!entry) return;
     const sec = entry.closest(".list");

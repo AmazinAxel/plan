@@ -1,5 +1,5 @@
 import { buildSessionCookie, checkPassword, verifyRequest } from "./src/auth";
-import { getData, putData, type Data } from "./src/plan-store";
+import { getData, putData, isDestructive, backupData, type Data } from "./src/plan-store";
 
 interface Env {
   PLAN_KV: KVNamespace;
@@ -117,6 +117,9 @@ export default {
             return json(current, { status: 409, headers: { "X-Plan-Version": String(current.version) } });
           }
           const next = { ...body, version: current.version + 1 };
+          // Snapshot the state being replaced when this write deletes a plan or
+          // list, so it can be rolled back from the Cloudflare KV dashboard.
+          if (isDestructive(current, next)) await backupData(env.PLAN_KV, current);
           try { await putData(env.PLAN_KV, next); } catch (e) {
             return json({ error: (e as Error).message }, { status: 400 });
           }
