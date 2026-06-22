@@ -690,6 +690,12 @@ board.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (body.dataset.mode !== "normal") return;
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "c" || e.key === "C")) {
+    const list = activePlan().lists[state.selection.listIndex];
+    const entry = list && state.selection.entryIndex >= 0 ? list.entries[state.selection.entryIndex] : null;
+    if (entry) { e.preventDefault(); navigator.clipboard?.writeText(entry.text); }
+    return;
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return; // let browser shortcuts (Ctrl+R, etc.) through
 
   switch (e.key) {
