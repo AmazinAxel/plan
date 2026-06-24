@@ -47,6 +47,7 @@ Four concerns, in this order in the file:
 1. **State + persistence** — `state.data` mirrors the server. `save()` debounces 300ms; `saveNow()` flushes on mode transitions.
 2. **Render** — one `render()` rebuilds `<main>` from scratch each call. The data set is tiny; do not optimize prematurely.
 3. **Modes** — `body.dataset.mode` is `"normal" | "insert" | "palette" | "confirm"`. The desktop keyboard handler is a no-op in any non-`normal` mode. Exiting back to `normal` calls `saveNow()`.
+   - **Undo** — `pushHistory()` deep-clones `state.data` + `selection` onto a 5-deep stack right before each mutating action; `undo()` (Ctrl+Z, normal mode only) pops and restores. Restored snapshots keep the live `state.data.version` so the next save doesn't 409. Abandoned creations (a new entry/list created then cancelled) call `popHistory()` to discard their snapshot, so undo never replays a no-op. `applyRemote()` clears the stack — its snapshots are relative to the superseded blob.
 4. **Drag** — SortableJS, two groups (`"lists"` horizontal, `"entries"` for items). Single-view disables cross-list drag by setting `pull/put: false` — same render path, just an option flip.
 
 ### Desktop key map (normal mode)
@@ -65,6 +66,8 @@ Four concerns, in this order in the file:
 | `b`      | Set / clear background image URL for current plan                |
 | `Space`  | Plan palette — fuzzy match, Enter switches plan. Always shows a `<New plan>` row at the bottom which opens the new-plan confirm dialog. |
 | `v`      | Toggle multi-list / single-list view (desktop only)              |
+| Ctrl+Z   | Undo the last mutating action (create/delete/edit/reorder/move/bg). Up to 5 deep. |
+| Ctrl+C   | Copy the selected entry's text                                   |
 | Esc      | Forces save (insert/palette/confirm modals handle their own close) |
 
 ### Mobile (detected via `matchMedia("(hover: none) and (pointer: coarse)")` OR a mobile UA regex; mirrored to `body.touch` so CSS gating survives Firefox/Zen UA spoofing)

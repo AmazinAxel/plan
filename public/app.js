@@ -60,6 +60,31 @@ function saveNow() {
   return flushSave();
 }
 
+// ---------- undo history ----------
+// Snapshot state.data before each mutating action; Ctrl+Z restores the last one.
+// The data blob is tiny, so a deep clone per action is cheap.
+const HISTORY_LIMIT = 5;
+const history = [];
+function pushHistory() {
+  history.push({
+    data: JSON.parse(JSON.stringify(state.data)),
+    selection: { ...state.selection }
+  });
+  if (history.length > HISTORY_LIMIT) history.shift();
+}
+// Drop the most recent snapshot — used when an action is abandoned (e.g. a new
+// entry/list created then cancelled), so undo doesn't replay a no-op.
+function popHistory() { history.pop(); }
+function undo() {
+  const prev = history.pop();
+  if (!prev) return;
+  // Keep the live server version so the next save doesn't 409 against a stale one.
+  prev.data.version = state.data.version;
+  state.data = prev.data;
+  state.selection = prev.selection;
+  saveNow(); render(); scrollSelectionIntoView();
+}
+
 // ---------- mode ----------
 function setMode(mode) { body.dataset.mode = mode; }
 
@@ -158,6 +183,7 @@ function attachSortables() {
     onEnd: (ev) => {
       body.classList.remove("dragging");
       if (ev.oldIndex === ev.newIndex) return;
+      pushHistory();
       const moved = plan.lists.splice(ev.oldIndex, 1)[0];
       plan.lists.splice(ev.newIndex, 0, moved);
       state.selection.listIndex = ev.newIndex;
@@ -180,6 +206,8 @@ function attachSortables() {
         const fromList = plan.lists.find((l) => l.id === ev.from.dataset.listId);
         const toList = plan.lists.find((l) => l.id === ev.to.dataset.listId);
         if (!fromList || !toList) return;
+        if (fromList === toList && ev.oldIndex === ev.newIndex) return;
+        pushHistory();
         const [moved] = fromList.entries.splice(ev.oldIndex, 1);
         toList.entries.splice(ev.newIndex, 0, moved);
         state.selection.listIndex = plan.lists.indexOf(toList);
@@ -223,7 +251,9 @@ function editList(listIndex, isNew = false) {
   const stopKeep = keepFocusOnTabSwitch(input);
   const commit = () => {
     stopKeep();
-    list.name = input.value.trim();
+    const v = input.value.trim();
+    if (!isNew && v !== list.name) pushHistory();
+    list.name = v;
     save();
     setMode("normal"); render();
     if (list.entries.length === 0) newEntryBelow(true);
@@ -234,6 +264,7 @@ function editList(listIndex, isNew = false) {
       plan.lists.splice(listIndex, 1);
       if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
       state.selection.entryIndex = -1;
+      popHistory(); // discard the snapshot newList() pushed for this abandoned list
       save();
     }
     setMode("normal"); render();
@@ -272,6 +303,8 @@ function editEntry(listIndex, entryIndex, isNew = false, chainable = false) {
   const commit = () => {
     stopKeep();
     const v = input.value.trim();
+    if (isNew) { if (!v) popHistory(); } // abandoned new entry — discard its snapshot
+    else if (v !== entry.text) pushHistory();
     if (v) entry.text = v;
     else list.entries.splice(entryIndex, 1);
     save();
@@ -290,7 +323,7 @@ function editEntry(listIndex, entryIndex, isNew = false, chainable = false) {
     }
     else if (e.key === "Escape") {
       e.preventDefault(); cancelled = true; stopKeep();
-      if (!entry.text) { list.entries.splice(entryIndex, 1); save(); }
+      if (!entry.text) { list.entries.splice(entryIndex, 1); if (isNew) popHistory(); save(); }
       setMode("normal"); render();
     }
     e.stopPropagation();
@@ -300,6 +333,7 @@ function editEntry(listIndex, entryIndex, isNew = false, chainable = false) {
 // ---------- actions ----------
 function newList() {
   const plan = activePlan();
+  pushHistory();
   plan.lists.push({ id: uuid(), name: "", entries: [] });
   state.selection.listIndex = plan.lists.length - 1;
   state.selection.entryIndex = -1;
@@ -312,6 +346,7 @@ function newEntryBelow(chainable = false) {
   const plan = activePlan();
   const list = plan.lists[state.selection.listIndex];
   if (!list) return;
+  pushHistory();
   const at = state.selection.entryIndex >= 0 ? state.selection.entryIndex + 1 : list.entries.length;
   const entry = { id: uuid(), text: "" };
   list.entries.splice(at, 0, entry);
@@ -326,6 +361,7 @@ function toggleTodo() {
   const list = plan.lists[state.selection.listIndex];
   if (!list || state.selection.entryIndex < 0) return;
   const entry = list.entries[state.selection.entryIndex];
+  pushHistory();
   if (entry.todo) {
     delete entry.todo;
   } else {
@@ -340,6 +376,7 @@ function deleteEntry() {
   const plan = activePlan();
   const list = plan.lists[state.selection.listIndex];
   if (!list || state.selection.entryIndex < 0) return;
+  pushHistory();
   list.entries.splice(state.selection.entryIndex, 1);
   if (state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
   saveNow(); render();
@@ -350,6 +387,7 @@ function deleteCurrentPlan() {
   if (!plan) return;
   if (plan.name === "Plan") return; // the default plan is protected
   confirmModal(`delete plan "${plan.name || "—"}"?`, () => {
+    pushHistory();
     state.data.plans = state.data.plans.filter((p) => p.id !== plan.id);
     state.data.activePlanId = state.data.plans[0].id;
     state.selection = { listIndex: 0, entryIndex: -1 };
@@ -362,6 +400,7 @@ function deleteCurrentList() {
   const list = plan.lists[state.selection.listIndex];
   if (!list) return;
   const doDelete = () => {
+    pushHistory();
     plan.lists.splice(state.selection.listIndex, 1);
     if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
     state.selection.entryIndex = -1;
@@ -416,6 +455,7 @@ function shiftMove(dx, dy) {
     if (dy) {
       const n = list.entries.length;
       if (n < 2) return;
+      pushHistory();
       // Wrap past the ends: moving up off the top sends the entry to the bottom, and vice versa.
       const ni = (ei + dy + n) % n;
       const [moved] = list.entries.splice(ei, 1);
@@ -424,6 +464,7 @@ function shiftMove(dx, dy) {
     } else if (dx) {
       const ti = state.selection.listIndex + dx;
       if (ti < 0 || ti >= plan.lists.length) return;
+      pushHistory();
       const target = plan.lists[ti];
       const [moved] = list.entries.splice(ei, 1);
       const insertAt = Math.min(ei, target.entries.length);
@@ -435,6 +476,7 @@ function shiftMove(dx, dy) {
     const li = state.selection.listIndex;
     const ni = li + dx;
     if (ni < 0 || ni >= plan.lists.length) return;
+    pushHistory();
     [plan.lists[li], plan.lists[ni]] = [plan.lists[ni], plan.lists[li]];
     state.selection.listIndex = ni;
   } else {
@@ -576,6 +618,7 @@ function openNewPlan(seedName = "") {
   const submit = () => {
     const name = input.value.trim();
     if (!name) return;
+    pushHistory();
     const p = { id: uuid(), name, lists: [{ id: uuid(), name: "", entries: [] }] };
     state.data.plans.push(p);
     state.data.activePlanId = p.id;
@@ -617,6 +660,7 @@ function openBg() {
   let confirmed = false;
   const submit = () => {
     const v = input.value.trim();
+    if (v !== (plan.background || "")) pushHistory();
     if (v) plan.background = v; else delete plan.background;
     confirmed = true;
     saveNow();
@@ -690,11 +734,14 @@ board.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (body.dataset.mode !== "normal") return;
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "c" || e.key === "C")) {
+  if (e.ctrlKey && !e.altKey && (e.key === "c" || e.key === "C")) {
     const list = activePlan().lists[state.selection.listIndex];
     const entry = list && state.selection.entryIndex >= 0 ? list.entries[state.selection.entryIndex] : null;
     if (entry) { e.preventDefault(); navigator.clipboard?.writeText(entry.text); }
     return;
+  }
+  if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+    e.preventDefault(); undo(); return;
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return; // let browser shortcuts (Ctrl+R, etc.) through
 
@@ -855,6 +902,7 @@ async function loadData() {
 // blob (in state.selection), so render() re-clamps it.
 function applyRemote(remote) {
   state.data = remote;
+  history.length = 0; // snapshots are relative to the old blob; don't let undo clobber remote edits
   render();
 }
 
