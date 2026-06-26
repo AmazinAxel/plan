@@ -828,6 +828,9 @@ function setupTouch() {
     // Single-list view: swipe cycles lists. Plan switching on mobile is
     // deliberate-only, via the plan-name button → palette.
     if (body.dataset.view !== "single") return;
+    // While editing an entry, selecting text drags the finger across the field —
+    // don't read that as a list-switch swipe.
+    if (body.dataset.mode === "insert") return;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) move(dx < 0 ? 1 : -1, 0);
   });
 
