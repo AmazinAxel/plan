@@ -167,6 +167,45 @@ function renderDots(plan) {
 // ---------- sortable ----------
 let sortables = [];
 function destroySortables() { sortables.forEach((s) => s.destroy()); sortables = []; }
+
+// Auto-scroll a list while dragging an entry near its top/bottom edge. Works for
+// both desktop (native drag -> dragover) and touch (Sortable fallback -> touchmove).
+const autoScroll = { active: false, raf: 0, x: 0, y: 0 };
+function autoScrollTrack(e) {
+  const t = e.touches?.[0] || e.changedTouches?.[0] || e;
+  if (t.clientX != null) { autoScroll.x = t.clientX; autoScroll.y = t.clientY; }
+}
+function autoScrollStep() {
+  if (!autoScroll.active) return;
+  const { x, y } = autoScroll;
+  board.querySelectorAll(".entries").forEach((ul) => {
+    const r = ul.getBoundingClientRect();
+    if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
+    const zone = Math.max(24, r.height * 0.1); // top/bottom 10% (min 24px for short lists)
+    const maxSpeed = 14; // px per frame at the very edge
+    let delta = 0;
+    if (y < r.top + zone) delta = -maxSpeed * ((r.top + zone - y) / zone);
+    else if (y > r.bottom - zone) delta = maxSpeed * ((y - (r.bottom - zone)) / zone);
+    if (delta) ul.scrollTop += delta;
+  });
+  autoScroll.raf = requestAnimationFrame(autoScrollStep);
+}
+function startAutoScroll() {
+  if (autoScroll.active) return;
+  autoScroll.active = true;
+  document.addEventListener("dragover", autoScrollTrack, true);
+  document.addEventListener("touchmove", autoScrollTrack, { capture: true, passive: true });
+  document.addEventListener("pointermove", autoScrollTrack, true);
+  autoScroll.raf = requestAnimationFrame(autoScrollStep);
+}
+function stopAutoScroll() {
+  if (!autoScroll.active) return;
+  autoScroll.active = false;
+  cancelAnimationFrame(autoScroll.raf);
+  document.removeEventListener("dragover", autoScrollTrack, true);
+  document.removeEventListener("touchmove", autoScrollTrack, { capture: true });
+  document.removeEventListener("pointermove", autoScrollTrack, true);
+}
 function attachSortables() {
   destroySortables();
   const plan = activePlan();
@@ -196,13 +235,15 @@ function attachSortables() {
       group: { name: "entries", pull: !singleView, put: !singleView },
       animation: 120,
       draggable: ".entry",
+      scroll: false, // handled by our own edge auto-scroll (startAutoScroll)
       // Touch: brief hold before drag, so a quick swipe scrolls instead.
       delay: 250,
       delayOnTouchOnly: true,
       touchStartThreshold: 5,
-      onStart: () => body.classList.add("dragging"),
+      onStart: () => { body.classList.add("dragging"); startAutoScroll(); },
       onEnd: (ev) => {
         body.classList.remove("dragging");
+        stopAutoScroll();
         const fromList = plan.lists.find((l) => l.id === ev.from.dataset.listId);
         const toList = plan.lists.find((l) => l.id === ev.to.dataset.listId);
         if (!fromList || !toList) return;

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bunx wrangler *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(WRANGLER_LOG=debug bunx wrangler deploy)",
+      "Bash(bunx wrangler@4.99.0 deploy)",
+      "Bash(CLOUDFLARE_API_TELEMETRY_DISABLED=1 WRANGLER_SEND_METRICS=false bunx wrangler@4.99.0 deploy)"
+    ]
+  }
+}
