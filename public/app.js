@@ -6,7 +6,12 @@ const state = {
   data: { activePlanId: "", plans: [] },
   selection: { listIndex: 0, entryIndex: -1 },
   isTouch: matchMedia("(hover: none) and (pointer: coarse)").matches
-    || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+  // Mobile: the first entry made after arriving at a list saves-and-stops
+  // (keyboard hides); every entry made after that chains. Reset when the
+  // viewed list changes (see render()).
+  firstEntryMade: false,
+  viewedListId: null
 };
 
 const uuid = () => crypto.randomUUID();
@@ -96,6 +101,11 @@ function render() {
   if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
   const list = plan.lists[state.selection.listIndex];
   if (list && state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
+
+  // Whenever the viewed list changes, the next entry made is again a "first"
+  // one that saves-and-stops on mobile (see editEntry).
+  const viewedId = list?.id ?? null;
+  if (viewedId !== state.viewedListId) { state.viewedListId = viewedId; state.firstEntryMade = false; }
 
   // Preserve per-list scroll positions across the rebuild.
   const scrolls = {};
@@ -297,7 +307,7 @@ function editList(listIndex, isNew = false) {
     list.name = v;
     save();
     setMode("normal"); render();
-    if (list.entries.length === 0) newEntryBelow(true);
+    if (list.entries.length === 0) newEntryBelow();
   };
   const cancel = () => {
     stopKeep();
@@ -319,7 +329,7 @@ function editList(listIndex, isNew = false) {
   });
 }
 
-function editEntry(listIndex, entryIndex, isNew = false, chainable = false) {
+function editEntry(listIndex, entryIndex, isNew = false) {
   const plan = activePlan();
   const list = plan.lists[listIndex];
   if (!list) return;
@@ -348,18 +358,20 @@ function editEntry(listIndex, entryIndex, isNew = false, chainable = false) {
     else if (v !== entry.text) pushHistory();
     if (v) entry.text = v;
     else list.entries.splice(entryIndex, 1);
+    // Mobile: once a new entry has been saved in this list, later entries chain.
+    if (isNew && v) state.firstEntryMade = true;
     save();
     setMode("normal"); render();
-    if (chain && v) {
-      const nextChainable = state.isTouch ? (isNew && chainable) : true;
-      newEntryBelow(nextChainable);
-    }
+    if (chain && v) newEntryBelow();
   };
   input.addEventListener("blur", () => { if (!cancelled) commit(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      chain = state.isTouch ? (isNew ? chainable : true) : isNew;
+      // Desktop: only new entries chain. Mobile: a new entry chains only after
+      // the first one has been made (the first saves-and-stops); editing an
+      // existing entry always chains — it's the mobile "add entry" gesture.
+      chain = state.isTouch ? (isNew ? state.firstEntryMade : true) : isNew;
       input.blur();
     }
     else if (e.key === "Escape") {
@@ -383,7 +395,7 @@ function newList() {
   editList(state.selection.listIndex, true);
 }
 
-function newEntryBelow(chainable = false) {
+function newEntryBelow() {
   const plan = activePlan();
   const list = plan.lists[state.selection.listIndex];
   if (!list) return;
@@ -394,7 +406,7 @@ function newEntryBelow(chainable = false) {
   state.selection.entryIndex = at;
   save();
   render();
-  editEntry(state.selection.listIndex, at, true, chainable);
+  editEntry(state.selection.listIndex, at, true);
 }
 
 function toggleTodo() {
