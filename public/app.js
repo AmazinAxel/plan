@@ -515,8 +515,12 @@ function shiftMove(dx, dy) {
       list.entries.splice(ni, 0, moved);
       state.selection.entryIndex = ni;
     } else if (dx) {
-      const ti = state.selection.listIndex + dx;
-      if (ti < 0 || ti >= plan.lists.length) return;
+      const n = plan.lists.length;
+      if (n < 2) return;
+      // Single-list view wraps past the ends; multi-list view clamps.
+      const raw = state.selection.listIndex + dx;
+      const ti = body.dataset.view === "single" ? ((raw % n) + n) % n : raw;
+      if (ti < 0 || ti >= n) return;
       pushHistory();
       const target = plan.lists[ti];
       const [moved] = list.entries.splice(ei, 1);
@@ -526,9 +530,13 @@ function shiftMove(dx, dy) {
       state.selection.entryIndex = insertAt;
     }
   } else if (dx) {
+    const n = plan.lists.length;
+    if (n < 2) return;
     const li = state.selection.listIndex;
-    const ni = li + dx;
-    if (ni < 0 || ni >= plan.lists.length) return;
+    // Single-list view wraps past the ends; multi-list view clamps.
+    const raw = li + dx;
+    const ni = body.dataset.view === "single" ? ((raw % n) + n) % n : raw;
+    if (ni < 0 || ni >= n) return;
     pushHistory();
     [plan.lists[li], plan.lists[ni]] = [plan.lists[ni], plan.lists[li]];
     state.selection.listIndex = ni;
@@ -799,10 +807,10 @@ document.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return; // let browser shortcuts (Ctrl+R, etc.) through
 
   switch (e.key) {
-    case "ArrowUp":    e.preventDefault(); (e.shiftKey ? shiftMove : move)(0, -1); break;
-    case "ArrowDown":  e.preventDefault(); (e.shiftKey ? shiftMove : move)(0,  1); break;
-    case "ArrowLeft":  e.preventDefault(); (e.shiftKey ? shiftMove : move)(-1, 0); break;
-    case "ArrowRight": e.preventDefault(); (e.shiftKey ? shiftMove : move)( 1, 0); break;
+    case "ArrowUp": case "k": case "K":    e.preventDefault(); (e.shiftKey ? shiftMove : move)(0, -1); break;
+    case "ArrowDown": case "j": case "J":  e.preventDefault(); (e.shiftKey ? shiftMove : move)(0,  1); break;
+    case "ArrowLeft": case "h": case "H":  e.preventDefault(); (e.shiftKey ? shiftMove : move)(-1, 0); break;
+    case "ArrowRight": case "l": case "L": e.preventDefault(); (e.shiftKey ? shiftMove : move)( 1, 0); break;
     case "Enter":      e.preventDefault(); newEntryBelow(); break;
     case "Delete":
     case "Backspace":
