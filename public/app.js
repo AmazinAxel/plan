@@ -222,21 +222,42 @@ function attachSortables() {
   if (!plan) return;
   const singleView = body.dataset.view === "single";
 
+  // Set when a list drag begins in single view: siblings are revealed for the
+  // duration of the drag, then hidden again on drop (see onStart/onEnd).
+  let autoMulti = false;
   sortables.push(Sortable.create(board, {
     group: "lists",
     animation: 120,
     draggable: ".list",
     filter: ".entries, .list-name input, .entry input",
     preventOnFilter: false,
-    onStart: () => body.classList.add("dragging"),
+    onStart: () => {
+      body.classList.add("dragging");
+      // Single view shows only the active list, so a dragged list has nowhere to
+      // go. Temporarily reveal the other lists (multi view) and keep the grabbed
+      // one scrolled into view, so it can be dropped anywhere in the order.
+      if (body.dataset.view === "single") {
+        autoMulti = true;
+        body.dataset.view = "multi";
+        const sec = board.querySelectorAll(".list")[state.selection.listIndex];
+        if (sec) sec.scrollIntoView({ behavior: "instant", inline: "center", block: "nearest" });
+      }
+    },
     onEnd: (ev) => {
       body.classList.remove("dragging");
-      if (ev.oldIndex === ev.newIndex) return;
-      pushHistory();
-      const moved = plan.lists.splice(ev.oldIndex, 1)[0];
-      plan.lists.splice(ev.newIndex, 0, moved);
-      state.selection.listIndex = ev.newIndex;
-      save(); render();
+      const reverted = autoMulti;
+      autoMulti = false;
+      if (ev.oldIndex !== ev.newIndex) {
+        pushHistory();
+        const moved = plan.lists.splice(ev.oldIndex, 1)[0];
+        plan.lists.splice(ev.newIndex, 0, moved);
+        state.selection.listIndex = ev.newIndex;
+        save();
+      }
+      if (reverted) body.dataset.view = "single";
+      // Re-attach sortables (via render) whenever the order changed or the view
+      // was flipped back, so the entry sortables get the right pull/put again.
+      if (reverted || ev.oldIndex !== ev.newIndex) render();
     }
   }));
 
