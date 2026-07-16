@@ -492,8 +492,8 @@ function move(dx, dy) {
   if (dx) {
     const n = plan.lists.length;
     let next = state.selection.listIndex + dx;
-    // Single-list view wraps; multi-list view clamps.
-    next = body.dataset.view === "single" ? ((next % n) + n) % n : Math.max(0, Math.min(n - 1, next));
+    // Wrap past the ends in both single- and multi-list views.
+    next = ((next % n) + n) % n;
     state.selection.listIndex = next;
     const list = plan.lists[state.selection.listIndex];
     if (list && state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
@@ -538,10 +538,9 @@ function shiftMove(dx, dy) {
     } else if (dx) {
       const n = plan.lists.length;
       if (n < 2) return;
-      // Single-list view wraps past the ends; multi-list view clamps.
+      // Wrap past the ends in both single- and multi-list views.
       const raw = state.selection.listIndex + dx;
-      const ti = body.dataset.view === "single" ? ((raw % n) + n) % n : raw;
-      if (ti < 0 || ti >= n) return;
+      const ti = ((raw % n) + n) % n;
       pushHistory();
       const target = plan.lists[ti];
       const [moved] = list.entries.splice(ei, 1);
@@ -554,10 +553,9 @@ function shiftMove(dx, dy) {
     const n = plan.lists.length;
     if (n < 2) return;
     const li = state.selection.listIndex;
-    // Single-list view wraps past the ends; multi-list view clamps.
+    // Wrap past the ends in both single- and multi-list views.
     const raw = li + dx;
-    const ni = body.dataset.view === "single" ? ((raw % n) + n) % n : raw;
-    if (ni < 0 || ni >= n) return;
+    const ni = ((raw % n) + n) % n;
     pushHistory();
     [plan.lists[li], plan.lists[ni]] = [plan.lists[ni], plan.lists[li]];
     state.selection.listIndex = ni;
