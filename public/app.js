@@ -333,6 +333,22 @@ function attachSortables() {
 }
 
 // ---------- editing ----------
+// Map a viewport point to a character offset within an entry's text, so a
+// click/tap lands the caret where the finger/cursor was. Returns null when the
+// point isn't over the entry's text (empty space) — callers fall back to end.
+function caretOffsetFromPoint(x, y, entryEl) {
+  let node = null, offset = null;
+  if (document.caretPositionFromPoint) {
+    const pos = document.caretPositionFromPoint(x, y);
+    if (pos) { node = pos.offsetNode; offset = pos.offset; }
+  } else if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(x, y);
+    if (range) { node = range.startContainer; offset = range.startOffset; }
+  }
+  if (node && node.nodeType === Node.TEXT_NODE && entryEl.contains(node)) return offset;
+  return null;
+}
+
 // If focus leaves the window while editing, defer the commit until it returns
 // rather than dropping the in-flight text.
 function keepFocusOnTabSwitch(input) {
@@ -392,7 +408,7 @@ function editList(listIndex, isNew = false) {
   });
 }
 
-function editEntry(listIndex, entryIndex, isNew = false) {
+function editEntry(listIndex, entryIndex, isNew = false, caretPos = null) {
   const plan = activePlan();
   const list = plan.lists[listIndex];
   if (!list) return;
@@ -409,7 +425,9 @@ function editEntry(listIndex, entryIndex, isNew = false) {
   const resize = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
   input.addEventListener("input", resize);
   input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
+  const caret = caretPos != null && caretPos >= 0 && caretPos <= input.value.length
+    ? caretPos : input.value.length;
+  input.setSelectionRange(caret, caret);
   resize();
   const stopKeep = keepFocusOnTabSwitch(input);
   let cancelled = false;
@@ -533,6 +551,14 @@ function deleteCurrentList() {
 function move(dx, dy) {
   const plan = activePlan();
   if (!plan || plan.lists.length === 0) return;
+  // Recover from the fully-deselected state (nothing selected): the first arrow
+  // re-selects the first list's header.
+  if (state.selection.listIndex < 0) {
+    state.selection.listIndex = 0;
+    state.selection.entryIndex = -1;
+    render(); scrollSelectionIntoView();
+    return;
+  }
   if (dx) {
     const n = plan.lists.length;
     let next = state.selection.listIndex + dx;
@@ -806,6 +832,16 @@ function openBg() {
   input.focus();
 }
 
+// ---------- click/tap outside a list deselects everything ----------
+board.addEventListener("click", (e) => {
+  if (body.dataset.mode !== "normal") return;
+  if (e.target.closest(".list")) return;
+  if (state.selection.listIndex === -1 && state.selection.entryIndex === -1) return;
+  state.selection.listIndex = -1;
+  state.selection.entryIndex = -1;
+  render();
+});
+
 // ---------- desktop click-to-edit ----------
 board.addEventListener("click", (e) => {
   if (state.isTouch) return;
@@ -818,7 +854,8 @@ board.addEventListener("click", (e) => {
   state.selection.listIndex = li;
   state.selection.entryIndex = ei;
   render();
-  editEntry(li, ei);
+  const fresh = board.querySelectorAll(".list")[li].querySelectorAll(".entry")[ei];
+  editEntry(li, ei, false, caretOffsetFromPoint(e.clientX, e.clientY, fresh));
 });
 
 // ---------- mouse drag-to-scroll (desktop) ----------
@@ -937,7 +974,8 @@ function setupTouch() {
     const ei = [...sec.querySelectorAll(".entry")].indexOf(entry);
     state.selection.listIndex = li; state.selection.entryIndex = ei;
     render();
-    editEntry(li, ei);
+    const fresh = board.querySelectorAll(".list")[li].querySelectorAll(".entry")[ei];
+    editEntry(li, ei, false, caretOffsetFromPoint(e.clientX, e.clientY, fresh));
   });
 
   let touchStart = null;
