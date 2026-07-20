@@ -944,8 +944,7 @@ function setupTouch() {
   });
 
   $("nav-toggle").addEventListener("click", () => {
-    const open = body.classList.toggle("nav-open");
-    $("nav-toggle").textContent = open ? "▼" : "▲";
+    body.classList.toggle("nav-open");
   });
 
   $("actions").addEventListener("click", (e) => {

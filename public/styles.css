@@ -239,10 +239,17 @@ body.dragging-scroll .entries {
   font-family: var(--headerFont);
   font-size: 22px;
   letter-spacing: 0.5px;
+  /* Long-press to drag a list would otherwise select the name text on touch. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .list-name input {
   width: 100%;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .list-name:empty::after {
@@ -265,6 +272,12 @@ body.dragging-scroll .entries {
   word-break: break-word;
   white-space: pre-wrap;
   cursor: pointer;
+  /* A drag begins with a long-press (touch) which would otherwise trigger the
+     browser's native text selection/caret on the entry text. Suppress it here;
+     selection is re-enabled on the edit input/textarea below. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .entry[data-todo] {
@@ -337,6 +350,11 @@ body[data-mode="insert"] .entry[data-selected][data-todo] {
   padding: 0;
   background: transparent;
   color: inherit;
+  /* Re-enable text selection/caret while actually editing (user-select is
+     inherited, so the .entry rule above would otherwise disable it here too). */
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 /* hide list scrollbars while dragging entries between lists */
@@ -435,7 +453,9 @@ body.touch.nav-open #actions {
 
 /* floating bottom-right button to show/hide the nav bar */
 body.touch #nav-toggle {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   position: fixed;
   right: 12px;
   bottom: 12px;
@@ -447,8 +467,10 @@ body.touch #nav-toggle {
   border-radius: 50%;
   background: var(--surface);
   color: var(--text);
-  font-size: 14px;
-  line-height: 1;
+}
+
+body.touch.nav-open #nav-toggle svg {
+  transform: rotate(180deg);
 }
 
 body.touch #actions button {
