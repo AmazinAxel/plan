@@ -434,15 +434,18 @@ body.touch #board {
   min-height: 0;
 }
 
-/* nav bar hidden by default on mobile; toggled open via #nav-toggle */
+/* nav bar hidden by default on mobile; toggled open via #nav-toggle.
+   Fixed height so the toggle button can be centered against it. */
 body.touch #actions {
   display: none;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: center;
-  align-content: center;
+  align-items: center;
   gap: 6px;
   position: static;
-  padding: 10px;
+  height: 56px;
+  /* leave room on the right for the floating toggle button */
+  padding: 0 62px 0 10px;
   border-top: 0.2rem solid var(--border);
   background: var(--surface);
 }
@@ -451,7 +454,8 @@ body.touch.nav-open #actions {
   display: flex;
 }
 
-/* floating bottom-right button to show/hide the nav bar */
+/* floating bottom-right button to show/hide the nav bar. When the bar is
+   open it is 56px tall; bottom:8px centers the 40px button within it. */
 body.touch #nav-toggle {
   display: flex;
   align-items: center;
@@ -469,16 +473,24 @@ body.touch #nav-toggle {
   color: var(--text);
 }
 
+body.touch.nav-open #nav-toggle {
+  bottom: 8px;
+}
+
 body.touch.nav-open #nav-toggle svg {
   transform: rotate(180deg);
 }
 
 body.touch #actions button {
-  flex: 1 1 90px;
+  flex: 1 1 0;
+  min-width: 0;
   max-width: 180px;
   font-size: 12px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 body.touch #dots {

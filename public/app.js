@@ -246,7 +246,18 @@ function attachSortables() {
     autoMulti = true;
     body.dataset.view = "multi";
     const sec = board.querySelectorAll(".list")[state.selection.listIndex];
-    if (sec) sec.scrollIntoView({ behavior: "instant", inline: "center", block: "nearest" });
+    if (!sec) return;
+    // The active list is centered in single view. Revealing the siblings would
+    // otherwise let the first/last list slide to the board edge (nothing on one
+    // side to scroll against). Pad the board ends by exactly the empty space
+    // that flanks a centered list, so every list — including the first and last
+    // — can scroll to the same center position and the grabbed one stays put.
+    const pad = Math.max(0, (board.clientWidth - sec.offsetWidth) / 2);
+    board.style.paddingLeft = board.style.paddingRight = pad + "px";
+    sec.scrollIntoView({ behavior: "instant", inline: "center", block: "nearest" });
+  }
+  function clearDragPadding() {
+    board.style.paddingLeft = board.style.paddingRight = "";
   }
   sortables.push(Sortable.create(board, {
     group: "lists",
@@ -262,6 +273,7 @@ function attachSortables() {
     onEnd: (ev) => {
       body.classList.remove("dragging");
       stopAutoScroll();
+      clearDragPadding();
       const reverted = autoMulti;
       autoMulti = false;
       if (ev.oldIndex !== ev.newIndex) {
@@ -299,6 +311,7 @@ function attachSortables() {
       onEnd: (ev) => {
         body.classList.remove("dragging");
         stopAutoScroll();
+        clearDragPadding();
         const reverted = autoMulti;
         autoMulti = false;
         const fromList = plan.lists.find((l) => l.id === ev.from.dataset.listId);
