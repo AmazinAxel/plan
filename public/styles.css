@@ -392,6 +392,7 @@ body[data-view="multi"] #dots {
 
 /* default (desktop): hide mobile-only chrome */
 #actions,
+#nav-toggle,
 .confirm-btn {
   display: none;
 }
@@ -415,8 +416,9 @@ body.touch #board {
   min-height: 0;
 }
 
+/* nav bar hidden by default on mobile; toggled open via #nav-toggle */
 body.touch #actions {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   justify-content: center;
   align-content: center;
@@ -425,6 +427,28 @@ body.touch #actions {
   padding: 10px;
   border-top: 0.2rem solid var(--border);
   background: var(--surface);
+}
+
+body.touch.nav-open #actions {
+  display: flex;
+}
+
+/* floating bottom-right button to show/hide the nav bar */
+body.touch #nav-toggle {
+  display: block;
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0.2rem solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
 }
 
 body.touch #actions button {

@@ -188,6 +188,20 @@ function autoScrollTrack(e) {
 function autoScrollStep() {
   if (!autoScroll.active) return;
   const { x, y } = autoScroll;
+  // Horizontal board scroll near its left/right edges. Reveals the neighbouring
+  // lists while dragging a list, or an entry across lists.
+  {
+    const r = board.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+      const zone = Math.max(40, r.width * 0.08); // left/right 8% (min 40px)
+      const maxSpeed = 20; // px per frame at the very edge
+      let dx = 0;
+      if (x < r.left + zone) dx = -maxSpeed * ((r.left + zone - x) / zone);
+      else if (x > r.right - zone) dx = maxSpeed * ((x - (r.right - zone)) / zone);
+      if (dx) board.scrollLeft += dx;
+    }
+  }
+  // Vertical scroll within whichever list the pointer is hovering.
   board.querySelectorAll(".entries").forEach((ul) => {
     const r = ul.getBoundingClientRect();
     if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
@@ -220,11 +234,20 @@ function attachSortables() {
   destroySortables();
   const plan = activePlan();
   if (!plan) return;
-  const singleView = body.dataset.view === "single";
 
-  // Set when a list drag begins in single view: siblings are revealed for the
-  // duration of the drag, then hidden again on drop (see onStart/onEnd).
+  // Set when a drag begins in single view: siblings are revealed for the
+  // duration of the drag, then hidden again on drop. Shared by both the list
+  // sortable and the entry sortables so either kind of drag can reach the
+  // neighbouring lists. Single view shows only the active list, so a dragged
+  // list/entry would otherwise have nowhere to go.
   let autoMulti = false;
+  function revealSiblingsForDrag() {
+    if (body.dataset.view !== "single") return;
+    autoMulti = true;
+    body.dataset.view = "multi";
+    const sec = board.querySelectorAll(".list")[state.selection.listIndex];
+    if (sec) sec.scrollIntoView({ behavior: "instant", inline: "center", block: "nearest" });
+  }
   sortables.push(Sortable.create(board, {
     group: "lists",
     animation: 120,
@@ -233,18 +256,12 @@ function attachSortables() {
     preventOnFilter: false,
     onStart: () => {
       body.classList.add("dragging");
-      // Single view shows only the active list, so a dragged list has nowhere to
-      // go. Temporarily reveal the other lists (multi view) and keep the grabbed
-      // one scrolled into view, so it can be dropped anywhere in the order.
-      if (body.dataset.view === "single") {
-        autoMulti = true;
-        body.dataset.view = "multi";
-        const sec = board.querySelectorAll(".list")[state.selection.listIndex];
-        if (sec) sec.scrollIntoView({ behavior: "instant", inline: "center", block: "nearest" });
-      }
+      startAutoScroll();
+      revealSiblingsForDrag();
     },
     onEnd: (ev) => {
       body.classList.remove("dragging");
+      stopAutoScroll();
       const reverted = autoMulti;
       autoMulti = false;
       if (ev.oldIndex !== ev.newIndex) {
@@ -263,7 +280,10 @@ function attachSortables() {
 
   board.querySelectorAll(".entries").forEach((ul) => {
     sortables.push(Sortable.create(ul, {
-      group: { name: "entries", pull: !singleView, put: !singleView },
+      // Cross-list moves stay enabled even in single view: the drag reveals the
+      // neighbouring lists (see revealSiblingsForDrag) so an entry can be dropped
+      // into any of them.
+      group: { name: "entries", pull: true, put: true },
       animation: 120,
       draggable: ".entry",
       scroll: false, // handled by our own edge auto-scroll (startAutoScroll)
@@ -271,20 +291,29 @@ function attachSortables() {
       delay: 250,
       delayOnTouchOnly: true,
       touchStartThreshold: 5,
-      onStart: () => { body.classList.add("dragging"); startAutoScroll(); },
+      onStart: () => {
+        body.classList.add("dragging");
+        startAutoScroll();
+        revealSiblingsForDrag();
+      },
       onEnd: (ev) => {
         body.classList.remove("dragging");
         stopAutoScroll();
+        const reverted = autoMulti;
+        autoMulti = false;
         const fromList = plan.lists.find((l) => l.id === ev.from.dataset.listId);
         const toList = plan.lists.find((l) => l.id === ev.to.dataset.listId);
-        if (!fromList || !toList) return;
-        if (fromList === toList && ev.oldIndex === ev.newIndex) return;
-        pushHistory();
-        const [moved] = fromList.entries.splice(ev.oldIndex, 1);
-        toList.entries.splice(ev.newIndex, 0, moved);
-        state.selection.listIndex = plan.lists.indexOf(toList);
-        state.selection.entryIndex = ev.newIndex;
-        save(); render();
+        const moved = fromList && toList && !(fromList === toList && ev.oldIndex === ev.newIndex);
+        if (moved) {
+          pushHistory();
+          const [entry] = fromList.entries.splice(ev.oldIndex, 1);
+          toList.entries.splice(ev.newIndex, 0, entry);
+          state.selection.listIndex = plan.lists.indexOf(toList);
+          state.selection.entryIndex = ev.newIndex;
+          save();
+        }
+        if (reverted) body.dataset.view = "single";
+        if (moved || reverted) render();
       }
     }));
   });
@@ -912,6 +941,11 @@ function setupTouch() {
     // don't read that as a list-switch swipe.
     if (body.dataset.mode === "insert") return;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) move(dx < 0 ? 1 : -1, 0);
+  });
+
+  $("nav-toggle").addEventListener("click", () => {
+    const open = body.classList.toggle("nav-open");
+    $("nav-toggle").textContent = open ? "▼" : "▲";
   });
 
   $("actions").addEventListener("click", (e) => {
