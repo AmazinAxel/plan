@@ -433,8 +433,10 @@ function editEntry(listIndex, entryIndex, isNew = false) {
       e.preventDefault();
       // Desktop: only new entries chain. Mobile: a new entry chains only after
       // the first one has been made (the first saves-and-stops); editing an
-      // existing entry always chains — it's the mobile "add entry" gesture.
-      chain = state.isTouch ? (isNew ? state.firstEntryMade : true) : isNew;
+      // existing entry chains only when left unmodified — Enter after an edit
+      // just commits, but Enter on an untouched entry adds a new one.
+      const modified = input.value.trim() !== entry.text;
+      chain = state.isTouch ? (isNew ? state.firstEntryMade : !modified) : isNew;
       input.blur();
     }
     else if (e.key === "Escape") {
