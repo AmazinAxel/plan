@@ -346,7 +346,30 @@ function caretOffsetFromPoint(x, y, entryEl) {
     if (range) { node = range.startContainer; offset = range.startOffset; }
   }
   if (node && node.nodeType === Node.TEXT_NODE && entryEl.contains(node)) return offset;
-  return null;
+
+  // WebKit (mobile Safari) returns null for a point inside an element with
+  // user-select:none — which every .entry is — so the native hit-test above
+  // always fails on touch and the caller falls back to end-of-text. Recover by
+  // measuring the text node's per-character rects and picking the caret gap
+  // nearest the tap. Works regardless of user-select.
+  const text = entryEl.firstChild;
+  if (!text || text.nodeType !== Node.TEXT_NODE || !text.textContent) return null;
+  const range = document.createRange();
+  const len = text.textContent.length;
+  let best = null, bestDist = Infinity;
+  for (let i = 0; i < len; i++) {
+    range.setStart(text, i);
+    range.setEnd(text, i + 1);
+    for (const r of range.getClientRects()) {
+      // Heavily penalise rects on other wrapped lines so the tap stays on its row.
+      const offLine = (y < r.top || y > r.bottom) ? 1e6 : 0;
+      const dLeft = Math.abs(x - r.left) + offLine;   // caret before this char
+      const dRight = Math.abs(x - r.right) + offLine;  // caret after this char
+      if (dLeft < bestDist) { bestDist = dLeft; best = i; }
+      if (dRight < bestDist) { bestDist = dRight; best = i + 1; }
+    }
+  }
+  return best;
 }
 
 // If focus leaves the window while editing, defer the commit until it returns
@@ -654,8 +677,10 @@ function scrollSelectionIntoView() {
 }
 
 // ---------- modals ----------
+// Close on pointerdown, not click, so the dialog dismisses the instant a finger
+// touches the backdrop rather than waiting for the synthetic click on release.
 function attachBackdropClose(dlg) {
-  dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener("pointerdown", (e) => { if (e.target === dlg) dlg.close(); });
 }
 
 function confirmModal(text, onYes) {
@@ -832,14 +857,32 @@ function openBg() {
   input.focus();
 }
 
-// ---------- click/tap outside a list deselects everything ----------
+// ---------- click/tap outside a list deselects ----------
+// Clear the selection when the empty board area is activated. In single view the
+// active list must stay visible — nulling listIndex would leave no list with
+// [data-active], and the CSS hides every list but the active one, blanking the
+// whole board. So single view only drops the entry selection; multi view (only
+// reachable on desktop) fully deselects.
+function deselectOutside() {
+  if (body.dataset.view === "single") {
+    if (state.selection.entryIndex === -1) return;
+    state.selection.entryIndex = -1;
+  } else {
+    if (state.selection.listIndex === -1 && state.selection.entryIndex === -1) return;
+    state.selection.listIndex = -1;
+    state.selection.entryIndex = -1;
+  }
+  render();
+}
+
+// Desktop deselects on click: a drag-to-scroll moves the pointer and fires no
+// click, so the selection survives scrolling. Touch deselects on pointerdown for
+// instant feedback (see setupTouch).
 board.addEventListener("click", (e) => {
+  if (state.isTouch) return;
   if (body.dataset.mode !== "normal") return;
   if (e.target.closest(".list")) return;
-  if (state.selection.listIndex === -1 && state.selection.entryIndex === -1) return;
-  state.selection.listIndex = -1;
-  state.selection.entryIndex = -1;
-  render();
+  deselectOutside();
 });
 
 // ---------- desktop click-to-edit ----------
@@ -950,23 +993,44 @@ function setupTouch() {
   body.classList.add("touch");
   body.dataset.view = "single";
 
-  board.addEventListener("click", (e) => { if (e.target === board) setMode("normal"); });
+  // Tapping the empty board area dismisses on pointerdown — the instant the
+  // finger lands, no wait for the synthetic click. While editing this commits
+  // the in-flight field (its blur handler saves); in normal mode it deselects.
+  board.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".list")) return; // a real target handles its own tap
+    if (body.dataset.mode === "insert") { document.activeElement?.blur?.(); return; }
+    if (body.dataset.mode !== "normal") return;
+    deselectOutside();
+  }, true);
 
-  board.addEventListener("click", (e) => {
-    if (body.dataset.mode !== "normal") return; // already editing — let the field handle the tap
+  // Opening an editor can't fire on pointerdown — a touch there might become a
+  // vertical scroll or a long-press drag. Fire on pointerup instead, the moment
+  // the finger lifts, but only if the gesture stayed put (a scroll/swipe moves
+  // the pointer; a Sortable drag sets body.dragging). This drops the browser's
+  // synthetic-click latency without mistaking a scroll for a tap.
+  let tapStart = null;
+  board.addEventListener("pointerdown", (e) => {
+    tapStart = { x: e.clientX, y: e.clientY };
+  }, true);
+  board.addEventListener("pointerup", (e) => {
+    const start = tapStart; tapStart = null;
+    if (!start) return;
+    if (body.classList.contains("dragging")) return; // became a drag
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) return; // scroll/swipe
+    if (body.dataset.mode !== "normal") return; // editing — let the field handle the tap
+
     const name = e.target.closest(".list-name");
-    if (!name) return;
-    const sec = name.closest(".list");
-    const li = [...board.querySelectorAll(".list")].indexOf(sec);
-    if (li < 0) return;
-    state.selection.listIndex = li;
-    state.selection.entryIndex = -1;
-    render();
-    editList(li);
-  });
+    if (name) {
+      const sec = name.closest(".list");
+      const li = [...board.querySelectorAll(".list")].indexOf(sec);
+      if (li < 0) return;
+      state.selection.listIndex = li;
+      state.selection.entryIndex = -1;
+      render();
+      editList(li);
+      return;
+    }
 
-  board.addEventListener("click", (e) => {
-    if (body.dataset.mode !== "normal") return; // already editing — let the field handle the tap
     const entry = e.target.closest(".entry");
     if (!entry) return;
     const sec = entry.closest(".list");
@@ -976,7 +1040,7 @@ function setupTouch() {
     render();
     const fresh = board.querySelectorAll(".list")[li].querySelectorAll(".entry")[ei];
     editEntry(li, ei, false, caretOffsetFromPoint(e.clientX, e.clientY, fresh));
-  });
+  }, true);
 
   let touchStart = null;
   board.addEventListener("touchstart", (e) => {
