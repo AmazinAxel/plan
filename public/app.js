@@ -447,11 +447,17 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null) {
   it.appendChild(input);
   const resize = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
   input.addEventListener("input", resize);
+  resize();
   input.focus();
   const caret = caretPos != null && caretPos >= 0 && caretPos <= input.value.length
     ? caretPos : input.value.length;
-  input.setSelectionRange(caret, caret);
-  resize();
+  const applyCaret = () => input.setSelectionRange(caret, caret);
+  applyCaret();
+  // iOS WebKit parks the caret at the focus position (end of text) and won't
+  // repaint it for a programmatic mid-text selection until the next interaction —
+  // so the caret stayed invisible until you typed. Re-applying the selection on
+  // the next frame forces WebKit to draw it at the tapped spot right away.
+  requestAnimationFrame(applyCaret);
   const stopKeep = keepFocusOnTabSwitch(input);
   let cancelled = false;
   let chain = false;
@@ -683,6 +689,20 @@ function attachBackdropClose(dlg) {
   dlg.addEventListener("pointerdown", (e) => { if (e.target === dlg) dlg.close(); });
 }
 
+// A tap that activates the moment the finger lifts — no synthetic-click wait —
+// but only if it stayed put, so dragging to scroll a long list (e.g. the plan
+// palette) scrolls instead of picking an item. Falls back to click off touch.
+function fastTap(el, fn) {
+  if (!state.isTouch) { el.addEventListener("click", fn); return; }
+  let start = null;
+  el.addEventListener("pointerdown", (e) => { start = { x: e.clientX, y: e.clientY }; });
+  el.addEventListener("pointerup", (e) => {
+    const s = start; start = null;
+    if (!s || Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) return;
+    fn(e);
+  });
+}
+
 function confirmModal(text, onYes) {
   const dlg = $("confirm");
   const form = $("confirm-form");
@@ -734,14 +754,14 @@ function openPalette() {
       li.dataset.planId = p.id;
       if (p.name === "Plan") li.dataset.default = "";
       if (i === highlighted) li.dataset.active = "";
-      li.addEventListener("click", () => pick(p.id));
+      fastTap(li, () => pick(p.id));
       list.appendChild(li);
     });
     const newLi = document.createElement("li");
     newLi.textContent = "<New plan>";
     newLi.dataset.newPlan = "";
     if (highlighted === matches.length) newLi.dataset.active = "";
-    newLi.addEventListener("click", () => createNew());
+    fastTap(newLi, () => createNew());
     list.appendChild(newLi);
   };
 
@@ -1082,6 +1102,14 @@ function setupTouch() {
 
 // Backdrop click closes a dialog (mobile expectation).
 ["palette", "new-plan", "confirm", "bg"].forEach((id) => attachBackdropClose($(id)));
+
+// Modal Confirm buttons submit on pointerdown so they react on press, not on the
+// delayed click. preventDefault stops the trailing click from submitting twice.
+if (state.isTouch) {
+  document.querySelectorAll(".confirm-btn").forEach((btn) => {
+    btn.addEventListener("pointerdown", (e) => { e.preventDefault(); btn.form?.requestSubmit(btn); });
+  });
+}
 
 // ---------- auth + boot ----------
 // Turnstile is only needed in the auth dialog, so load it on demand — the common
