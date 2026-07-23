@@ -422,6 +422,14 @@ body.touch {
   height: 100dvh;
 }
 
+/* Buttons act on pointerdown (see setupTouch), so suppress the browser's own
+   delayed tap-highlight flash and any double-tap-zoom wait — the handler is the
+   feedback now, and it fires the instant the button is pressed. */
+body.touch button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
 body.touch #topbar,
 body.touch #dots,
 body.touch #actions {

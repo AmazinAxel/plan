@@ -994,31 +994,27 @@ function setupTouch() {
   body.dataset.view = "single";
 
   // Tapping the empty board area dismisses on pointerdown — the instant the
-  // finger lands, no wait for the synthetic click. While editing this commits
-  // the in-flight field (its blur handler saves); in normal mode it deselects.
+  // finger lands, no wait for the synthetic click. One tap does everything: while
+  // editing it commits the in-flight field (its blur handler saves) AND drops the
+  // selection, so you don't need a second tap to clear the highlighted entry.
   board.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".list")) return; // a real target handles its own tap
-    if (body.dataset.mode === "insert") { document.activeElement?.blur?.(); return; }
+    if (body.dataset.mode === "insert") {
+      document.activeElement?.blur?.(); // commit + hide keyboard (blur runs commit synchronously)
+      deselectOutside();                // and drop the selection in the same tap
+      return;
+    }
     if (body.dataset.mode !== "normal") return;
     deselectOutside();
   }, true);
 
-  // Opening an editor can't fire on pointerdown — a touch there might become a
-  // vertical scroll or a long-press drag. Fire on pointerup instead, the moment
-  // the finger lifts, but only if the gesture stayed put (a scroll/swipe moves
-  // the pointer; a Sortable drag sets body.dragging). This drops the browser's
-  // synthetic-click latency without mistaking a scroll for a tap.
-  let tapStart = null;
-  board.addEventListener("pointerdown", (e) => {
-    tapStart = { x: e.clientX, y: e.clientY };
-  }, true);
-  board.addEventListener("pointerup", (e) => {
-    const start = tapStart; tapStart = null;
-    if (!start) return;
-    if (body.classList.contains("dragging")) return; // became a drag
-    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) return; // scroll/swipe
-    if (body.dataset.mode !== "normal") return; // editing — let the field handle the tap
-
+  // Opening an editor stays on `click`: the native click is what makes mobile
+  // browsers draw the caret and raise the keyboard for a programmatic focus().
+  // Firing our own focus() on pointerup instead left the caret invisible. The
+  // click handler still runs right after the tap, and a scroll/drag fires no
+  // click, so it only triggers on a genuine tap.
+  board.addEventListener("click", (e) => {
+    if (body.dataset.mode !== "normal") return; // already editing — let the field handle the tap
     const name = e.target.closest(".list-name");
     if (name) {
       const sec = name.closest(".list");
@@ -1040,7 +1036,7 @@ function setupTouch() {
     render();
     const fresh = board.querySelectorAll(".list")[li].querySelectorAll(".entry")[ei];
     editEntry(li, ei, false, caretOffsetFromPoint(e.clientX, e.clientY, fresh));
-  }, true);
+  });
 
   let touchStart = null;
   board.addEventListener("touchstart", (e) => {
@@ -1060,11 +1056,14 @@ function setupTouch() {
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) move(dx < 0 ? 1 : -1, 0);
   });
 
-  $("nav-toggle").addEventListener("click", () => {
-    body.classList.toggle("nav-open");
-  });
+  // Chrome buttons fire on pointerdown so they respond the instant they're
+  // pressed instead of waiting for the synthetic click on release. preventDefault
+  // keeps the press from also producing a delayed click that would fire twice.
+  const onPress = (el, fn) => el.addEventListener("pointerdown", (e) => { e.preventDefault(); fn(e); });
 
-  $("actions").addEventListener("click", (e) => {
+  onPress($("nav-toggle"), () => body.classList.toggle("nav-open"));
+
+  onPress($("actions"), (e) => {
     const act = e.target.dataset.act;
     if (!act) return;
     ({
@@ -1074,8 +1073,8 @@ function setupTouch() {
       "toggle-todo": toggleTodo
     })[act]?.();
   });
-  $("m-palette").addEventListener("click", openPalette);
-  $("m-view").addEventListener("click", () => {
+  onPress($("m-palette"), openPalette);
+  onPress($("m-view"), () => {
     body.dataset.view = body.dataset.view === "single" ? "multi" : "single";
     attachSortables(); render();
   });
