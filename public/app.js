@@ -689,18 +689,14 @@ function attachBackdropClose(dlg) {
   dlg.addEventListener("pointerdown", (e) => { if (e.target === dlg) dlg.close(); });
 }
 
-// A tap that activates the moment the finger lifts — no synthetic-click wait —
-// but only if it stayed put, so dragging to scroll a long list (e.g. the plan
-// palette) scrolls instead of picking an item. Falls back to click off touch.
+// Activate on pointerdown so a tapped item (e.g. a plan in the palette) fires the
+// instant the finger lands — no wait for the synthetic click on release and no
+// tap-highlight flash, so the modal just vanishes on press. preventDefault stops
+// the trailing click from firing the handler a second time. Falls back to click
+// off touch.
 function fastTap(el, fn) {
   if (!state.isTouch) { el.addEventListener("click", fn); return; }
-  let start = null;
-  el.addEventListener("pointerdown", (e) => { start = { x: e.clientX, y: e.clientY }; });
-  el.addEventListener("pointerup", (e) => {
-    const s = start; start = null;
-    if (!s || Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) return;
-    fn(e);
-  });
+  el.addEventListener("pointerdown", (e) => { e.preventDefault(); fn(e); });
 }
 
 function confirmModal(text, onYes) {

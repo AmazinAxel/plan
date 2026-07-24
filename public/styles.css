@@ -422,12 +422,26 @@ body.touch {
   height: 100dvh;
 }
 
-/* Buttons act on pointerdown (see setupTouch), so suppress the browser's own
-   delayed tap-highlight flash and any double-tap-zoom wait — the handler is the
-   feedback now, and it fires the instant the button is pressed. */
-body.touch button {
+/* Buttons and tappable list items act on pointerdown (see setupTouch/fastTap),
+   so suppress the browser's own delayed tap-highlight flash and any
+   double-tap-zoom wait — the handler is the feedback now, and it fires the
+   instant the element is pressed. */
+body.touch button,
+body.touch #palette-list li {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
+}
+
+/* iOS Safari moves focus into the <dialog> when showModal() runs and paints a
+   blue focus/selection ring around it; desktop doesn't. Kill that ring (and the
+   tap-highlight) so opening a modal shows no stray outline. */
+dialog:focus,
+dialog:focus-visible {
+  outline: none;
+}
+
+body.touch dialog {
+  -webkit-tap-highlight-color: transparent;
 }
 
 body.touch #topbar,
