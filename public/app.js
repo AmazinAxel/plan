@@ -11,7 +11,10 @@ const state = {
   // (keyboard hides); every entry made after that chains. Reset when the
   // viewed list changes (see render()).
   firstEntryMade: false,
-  viewedListId: null
+  viewedListId: null,
+  // The most recent list index that was actually selected (>= 0). Used to fall
+  // back to a sensible list when nothing is selected (delete-list / toggle-view).
+  lastListIndex: 0
 };
 
 const uuid = () => crypto.randomUUID();
@@ -101,6 +104,10 @@ function render() {
   if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
   const list = plan.lists[state.selection.listIndex];
   if (list && state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
+
+  // Remember the last genuinely-selected list so we can fall back to it when the
+  // selection is cleared (delete-list with nothing active, toggle-view, etc.).
+  if (state.selection.listIndex >= 0) state.lastListIndex = state.selection.listIndex;
 
   // Whenever the viewed list changes, the next entry made is again a "first"
   // one that saves-and-stops on mobile (see editEntry).
@@ -570,8 +577,19 @@ function deleteCurrentPlan() {
   });
 }
 
+// When nothing is selected (listIndex < 0), fall back to the last active list on
+// this plan, clamped to what still exists — or the first list if none was set.
+function resolvedListIndex() {
+  const plan = activePlan();
+  if (!plan || plan.lists.length === 0) return -1;
+  if (state.selection.listIndex >= 0) return state.selection.listIndex;
+  return Math.min(Math.max(0, state.lastListIndex), plan.lists.length - 1);
+}
+
 function deleteCurrentList() {
   const plan = activePlan();
+  // With no list selected, delete the last active list on this plan.
+  if (state.selection.listIndex < 0) state.selection.listIndex = resolvedListIndex();
   const list = plan.lists[state.selection.listIndex];
   if (!list) return;
   const doDelete = () => {
@@ -583,6 +601,19 @@ function deleteCurrentList() {
   };
   if (list.entries.length === 0) { doDelete(); return; }
   confirmModal(`delete list "${list.name || "—"}"?`, doDelete);
+}
+
+// Flip single/multi view. If nothing is selected, land on the last active list
+// (or the first) so single view always has a list to show instead of a blank
+// board.
+function toggleView() {
+  if (state.selection.listIndex < 0) {
+    const idx = resolvedListIndex();
+    if (idx >= 0) { state.selection.listIndex = idx; state.selection.entryIndex = -1; }
+  }
+  body.dataset.view = body.dataset.view === "single" ? "multi" : "single";
+  attachSortables();
+  render();
 }
 
 // ---------- navigation ----------
@@ -1026,12 +1057,35 @@ document.addEventListener("keydown", (e) => {
     case "v":
       if (state.isTouch) break;
       e.preventDefault();
-      body.dataset.view = body.dataset.view === "single" ? "multi" : "single";
-      attachSortables();
-      render();
+      toggleView();
       break;
   }
 });
+
+// Open an entry / list header for editing by id, resolving indices against the
+// *current* data — safe to call right after a commit re-rendered the board (the
+// tapped DOM node is stale by then, but its id still points at live data).
+function editEntryById(listId, entryId, x, y) {
+  const plan = activePlan();
+  const li = plan.lists.findIndex((l) => l.id === listId);
+  if (li < 0) return;
+  const ei = plan.lists[li].entries.findIndex((en) => en.id === entryId);
+  if (ei < 0) return;
+  state.selection.listIndex = li;
+  state.selection.entryIndex = ei;
+  render();
+  const fresh = board.querySelectorAll(".list")[li]?.querySelectorAll(".entry")[ei];
+  if (fresh) editEntry(li, ei, false, caretOffsetFromPoint(x, y, fresh));
+}
+function editListById(listId) {
+  const plan = activePlan();
+  const li = plan.lists.findIndex((l) => l.id === listId);
+  if (li < 0) return;
+  state.selection.listIndex = li;
+  state.selection.entryIndex = -1;
+  render();
+  editList(li);
+}
 
 // ---------- touch ----------
 function setupTouch() {
@@ -1039,25 +1093,44 @@ function setupTouch() {
   body.classList.add("touch");
   body.dataset.view = "single";
 
-  // Tapping the empty board area dismisses on pointerdown — the instant the
-  // finger lands, no wait for the synthetic click. One tap does everything: while
-  // editing it commits the in-flight field (its blur handler saves) AND drops the
-  // selection, so you don't need a second tap to clear the highlighted entry.
+  // Tapping the board while editing dismisses on pointerdown — the instant the
+  // finger lands, no wait for the synthetic click. Where the tap lands decides
+  // what happens:
+  //   • inside the active field            → leave it (place caret / select text)
+  //   • another entry/header in SAME list  → commit current, open the tapped one
+  //                                          at the tapped spot, right away
+  //   • anywhere else (other list / empty) → commit current + deselect everything
+  //                                          (same as a background tap)
   board.addEventListener("pointerdown", (e) => {
     if (body.dataset.mode === "insert") {
       const active = document.activeElement;
       const editing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
-      // Tapping inside the field being edited: leave it so the caret can be
-      // placed / text selected.
       if (editing && active.contains(e.target)) return;
-      const onList = !!e.target.closest(".list");
-      // A tap on another entry/list commits the current field, which re-renders
-      // the board — swallow the trailing click so it can't fire the open-editor
-      // handler against a now-detached node.
-      if (onList) swallowNextClick();
-      if (editing) active.blur();          // commit + hide keyboard (blur runs commit synchronously)
+
+      const editingSec = editing ? active.closest(".list") : null;
+      const targetSec = e.target.closest(".list");
+      const targetEntry = e.target.closest(".entry");
+      const targetName = e.target.closest(".list-name");
+
+      // The commit re-renders the board, so the trailing click would land on a
+      // detached node — swallow it in every branch and drive the next edit
+      // directly (by id) instead.
+      swallowNextClick();
+
+      if (editingSec && targetSec === editingSec && (targetEntry || targetName)) {
+        const listId = targetSec.dataset.listId;
+        const entryId = targetEntry?.dataset.entryId;
+        const x = e.clientX, y = e.clientY;
+        active.blur(); // commit the in-flight field (its blur handler saves)
+        if (entryId) editEntryById(listId, entryId, x, y);
+        else editListById(listId);
+        return;
+      }
+
+      // Other list, or empty space: behave like a background tap.
+      if (editing) active.blur();           // commit + hide keyboard
       else { setMode("normal"); render(); } // stuck in insert with no live field — recover
-      if (!onList) deselectOutside();       // empty-space tap also drops the selection
+      deselectOutside();
       return;
     }
     if (e.target.closest(".list")) return; // a real target handles its own tap
@@ -1132,10 +1205,7 @@ function setupTouch() {
     })[act]?.();
   });
   onPress($("m-palette"), openPalette);
-  onPress($("m-view"), () => {
-    body.dataset.view = body.dataset.view === "single" ? "multi" : "single";
-    attachSortables(); render();
-  });
+  onPress($("m-view"), toggleView);
 }
 
 // Backdrop click closes a dialog (mobile expectation).
@@ -1145,7 +1215,11 @@ function setupTouch() {
 // delayed click. preventDefault stops the trailing click from submitting twice.
 if (state.isTouch) {
   document.querySelectorAll(".confirm-btn").forEach((btn) => {
-    btn.addEventListener("pointerdown", (e) => { e.preventDefault(); btn.form?.requestSubmit(btn); });
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      swallowNextClick(); // closing on press lets the trailing click fall through to the board
+      btn.form?.requestSubmit(btn);
+    });
   });
 }
 
