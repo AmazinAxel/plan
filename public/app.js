@@ -402,6 +402,9 @@ function editList(listIndex, isNew = false) {
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
   const stopKeep = keepFocusOnTabSwitch(input);
+  // Only flow into entry creation when the name was committed with Enter
+  // ("keep going"); committing by tapping/clicking away just creates the list.
+  let chainOnCommit = false;
   const commit = () => {
     stopKeep();
     const v = input.value.trim();
@@ -409,7 +412,7 @@ function editList(listIndex, isNew = false) {
     list.name = v;
     save();
     setMode("normal"); render();
-    if (list.entries.length === 0) newEntryBelow();
+    if (chainOnCommit && list.entries.length === 0) newEntryBelow(isNew);
   };
   const cancel = () => {
     stopKeep();
@@ -425,13 +428,13 @@ function editList(listIndex, isNew = false) {
   let cancelled = false;
   input.addEventListener("blur", () => { if (!cancelled) commit(); });
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    if (e.key === "Enter") { e.preventDefault(); chainOnCommit = true; input.blur(); }
     else if (e.key === "Escape") { e.preventDefault(); cancelled = true; cancel(); }
     e.stopPropagation();
   });
 }
 
-function editEntry(listIndex, entryIndex, isNew = false, caretPos = null) {
+function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chainable = false) {
   const plan = activePlan();
   const list = plan.lists[listIndex];
   if (!list) return;
@@ -472,7 +475,9 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null) {
     if (isNew && v) state.firstEntryMade = true;
     save();
     setMode("normal"); render();
-    if (chain && v) newEntryBelow();
+    // Keep the chain alive across spawned entries so the new-list flow keeps
+    // making entries on each Enter until the field is committed by tapping out.
+    if (chain && v) newEntryBelow(chainable);
   };
   input.addEventListener("blur", () => { if (!cancelled) commit(); });
   input.addEventListener("keydown", (e) => {
@@ -483,7 +488,10 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null) {
       // existing entry chains only when left unmodified — Enter after an edit
       // just commits, but Enter on an untouched entry adds a new one.
       const modified = input.value.trim() !== entry.text;
-      chain = state.isTouch ? (isNew ? state.firstEntryMade : !modified) : isNew;
+      // The new-list flow (chainable) always keeps going on Enter; only tapping
+      // outside — a blur with no Enter — ends it. Otherwise fall back to the
+      // per-platform rule.
+      chain = chainable ? true : (state.isTouch ? (isNew ? state.firstEntryMade : !modified) : isNew);
       input.blur();
     }
     else if (e.key === "Escape") {
@@ -507,7 +515,9 @@ function newList() {
   editList(state.selection.listIndex, true);
 }
 
-function newEntryBelow() {
+// `chainable` carries the new-list flow: every Enter keeps spawning another
+// entry (see editEntry) until the field is committed by tapping outside.
+function newEntryBelow(chainable = false) {
   const plan = activePlan();
   const list = plan.lists[state.selection.listIndex];
   if (!list) return;
@@ -518,7 +528,7 @@ function newEntryBelow() {
   state.selection.entryIndex = at;
   save();
   render();
-  editEntry(state.selection.listIndex, at, true);
+  editEntry(state.selection.listIndex, at, true, null, chainable);
 }
 
 function toggleTodo() {
@@ -683,10 +693,30 @@ function scrollSelectionIntoView() {
 }
 
 // ---------- modals ----------
+// A touch modal closes on pointerdown (see below), but the browser still
+// delivers the trailing click to whatever is now under the finger — the board
+// behind the dialog — which would open the entry that sat behind the tapped
+// item. Swallow exactly one following click (capture phase) to stop that
+// pass-through. Times out in case no click ever arrives.
+function swallowNextClick() {
+  const onClick = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    cleanup();
+  };
+  const cleanup = () => { window.removeEventListener("click", onClick, true); clearTimeout(timer); };
+  const timer = setTimeout(cleanup, 700);
+  window.addEventListener("click", onClick, true);
+}
+
 // Close on pointerdown, not click, so the dialog dismisses the instant a finger
 // touches the backdrop rather than waiting for the synthetic click on release.
 function attachBackdropClose(dlg) {
-  dlg.addEventListener("pointerdown", (e) => { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener("pointerdown", (e) => {
+    if (e.target !== dlg) return;
+    if (state.isTouch) swallowNextClick();
+    dlg.close();
+  });
 }
 
 // Activate on pointerdown so a tapped item (e.g. a plan in the palette) fires the
@@ -696,7 +726,7 @@ function attachBackdropClose(dlg) {
 // off touch.
 function fastTap(el, fn) {
   if (!state.isTouch) { el.addEventListener("click", fn); return; }
-  el.addEventListener("pointerdown", (e) => { e.preventDefault(); fn(e); });
+  el.addEventListener("pointerdown", (e) => { e.preventDefault(); swallowNextClick(); fn(e); });
 }
 
 function confirmModal(text, onYes) {
@@ -1014,12 +1044,23 @@ function setupTouch() {
   // editing it commits the in-flight field (its blur handler saves) AND drops the
   // selection, so you don't need a second tap to clear the highlighted entry.
   board.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".list")) return; // a real target handles its own tap
     if (body.dataset.mode === "insert") {
-      document.activeElement?.blur?.(); // commit + hide keyboard (blur runs commit synchronously)
-      deselectOutside();                // and drop the selection in the same tap
+      const active = document.activeElement;
+      const editing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+      // Tapping inside the field being edited: leave it so the caret can be
+      // placed / text selected.
+      if (editing && active.contains(e.target)) return;
+      const onList = !!e.target.closest(".list");
+      // A tap on another entry/list commits the current field, which re-renders
+      // the board — swallow the trailing click so it can't fire the open-editor
+      // handler against a now-detached node.
+      if (onList) swallowNextClick();
+      if (editing) active.blur();          // commit + hide keyboard (blur runs commit synchronously)
+      else { setMode("normal"); render(); } // stuck in insert with no live field — recover
+      if (!onList) deselectOutside();       // empty-space tap also drops the selection
       return;
     }
+    if (e.target.closest(".list")) return; // a real target handles its own tap
     if (body.dataset.mode !== "normal") return;
     deselectOutside();
   }, true);
@@ -1048,6 +1089,7 @@ function setupTouch() {
     const sec = entry.closest(".list");
     const li = [...board.querySelectorAll(".list")].indexOf(sec);
     const ei = [...sec.querySelectorAll(".entry")].indexOf(entry);
+    if (li < 0 || ei < 0) return; // stale node from a re-render — ignore
     state.selection.listIndex = li; state.selection.entryIndex = ei;
     render();
     const fresh = board.querySelectorAll(".list")[li].querySelectorAll(".entry")[ei];

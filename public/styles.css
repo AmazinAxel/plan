@@ -440,8 +440,19 @@ dialog:focus-visible {
   outline: none;
 }
 
+/* Safari still draws a text/box selection highlight around the modal's own
+   content on tap even with the focus ring gone, so make the dialog chrome
+   unselectable — only the actual text fields stay selectable. */
 body.touch dialog {
   -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body.touch dialog input,
+body.touch dialog textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 body.touch #topbar,
