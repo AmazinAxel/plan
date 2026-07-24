@@ -184,6 +184,11 @@ function renderDots(plan) {
 // ---------- sortable ----------
 let sortables = [];
 function destroySortables() { sortables.forEach((s) => s.destroy()); sortables = []; }
+// Toggle dragging on all sortables. Disabled while editing so a mouse-drag to
+// select text inside the field isn't hijacked into an entry/list drag (which
+// also left the board in a glitched, unselectable state on abort). Ending an
+// edit calls render(), which rebuilds fresh (enabled) sortables.
+function setDragEnabled(on) { sortables.forEach((s) => s.option("disabled", !on)); }
 
 // Auto-scroll a list while dragging an entry near its top/bottom edge. Works for
 // both desktop (native drag -> dragover) and touch (Sortable fallback -> touchmove).
@@ -400,6 +405,7 @@ function editList(listIndex, isNew = false) {
   const list = plan.lists[listIndex];
   if (!list) return;
   setMode("insert");
+  setDragEnabled(false);
   const sec = board.querySelectorAll(".list")[listIndex];
   const nameEl = sec.querySelector(".list-name");
   nameEl.textContent = "";
@@ -448,6 +454,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   const entry = list.entries[entryIndex];
   if (!entry) return;
   setMode("insert");
+  setDragEnabled(false);
   const sec = board.querySelectorAll(".list")[listIndex];
   const it = sec.querySelectorAll(".entry")[entryIndex];
   it.textContent = "";
