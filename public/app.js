@@ -11,6 +11,10 @@ const state = {
   // (keyboard hides); every entry made after that chains. Reset when the
   // viewed list changes (see render()).
   firstEntryMade: false,
+  // Desktop: Enter on a freshly added entry saves-and-stops until the chain is
+  // armed, which that same commit does — so the next Enter, and every one after
+  // it, also opens the following entry. Disarmed by anything else (see keydown).
+  chainArmed: false,
   viewedListId: null,
   // The most recent list index that was actually selected (>= 0). Used to fall
   // back to a sensible list when nothing is selected (delete-list / toggle-view).
@@ -478,6 +482,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   const stopKeep = keepFocusOnTabSwitch(input);
   let cancelled = false;
   let chain = false;
+  let armsChain = false;
   const commit = () => {
     stopKeep();
     const v = input.value.trim();
@@ -492,24 +497,32 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
     // Keep the chain alive across spawned entries so the new-list flow keeps
     // making entries on each Enter until the field is committed by tapping out.
     if (chain && v) newEntryBelow(chainable);
+    // Desktop: this Enter only armed the chain (see keydown) — the next one starts
+    // it. Anything else (tapping out, an empty entry, editing an existing one)
+    // ends the burst.
+    else if (armsChain && v) state.chainArmed = true;
+    else state.chainArmed = false;
   };
   input.addEventListener("blur", () => { if (!cancelled) commit(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      // Desktop: only new entries chain. Mobile: a new entry chains only after
-      // the first one has been made (the first saves-and-stops); editing an
-      // existing entry chains only when left unmodified — Enter after an edit
-      // just commits, but Enter on an untouched entry adds a new one.
+      // Desktop: only new entries chain, and only once the chain is armed — the
+      // first Enter-committed entry in a burst saves-and-stops, every one after
+      // that chains. Mobile: a new entry chains only after the first one has been
+      // made (the first saves-and-stops); editing an existing entry chains only
+      // when left unmodified — Enter after an edit just commits, but Enter on an
+      // untouched entry adds a new one.
       const modified = input.value.trim() !== entry.text;
       // The new-list flow (chainable) always keeps going on Enter; only tapping
       // outside — a blur with no Enter — ends it. Otherwise fall back to the
       // per-platform rule.
-      chain = chainable ? true : (state.isTouch ? (isNew ? state.firstEntryMade : !modified) : isNew);
+      chain = chainable ? true : (state.isTouch ? (isNew ? state.firstEntryMade : !modified) : (isNew && state.chainArmed));
+      armsChain = !chainable && !state.isTouch && isNew && !state.chainArmed;
       input.blur();
     }
     else if (e.key === "Escape") {
-      e.preventDefault(); cancelled = true; stopKeep();
+      e.preventDefault(); cancelled = true; stopKeep(); state.chainArmed = false;
       if (!entry.text) { list.entries.splice(entryIndex, 1); if (isNew) popHistory(); save(); }
       setMode("normal"); render();
     }
@@ -941,6 +954,11 @@ function openBg() {
   input.focus();
 }
 
+// Clicking anywhere while not editing ends the Enter-chain burst.
+document.addEventListener("pointerdown", () => {
+  if (body.dataset.mode === "normal") state.chainArmed = false;
+});
+
 // ---------- click/tap outside a list deselects ----------
 // Clear the selection when the empty board area is activated. In single view the
 // active list must stay visible — nulling listIndex would leave no list with
@@ -1032,6 +1050,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault(); undo(); return;
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return; // let browser shortcuts (Ctrl+R, etc.) through
+  if (e.key !== "Enter") state.chainArmed = false; // anything but a straight Enter run ends the burst
 
   switch (e.key) {
     case "ArrowUp": case "k": case "K":    e.preventDefault(); (e.shiftKey ? shiftMove : move)(0, -1); break;
