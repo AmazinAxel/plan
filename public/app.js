@@ -1088,75 +1088,56 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Open an entry / list header for editing by id, resolving indices against the
-// *current* data — safe to call right after a commit re-rendered the board (the
-// tapped DOM node is stale by then, but its id still points at live data).
-function editEntryById(listId, entryId, x, y) {
-  const plan = activePlan();
-  const li = plan.lists.findIndex((l) => l.id === listId);
-  if (li < 0) return;
-  const ei = plan.lists[li].entries.findIndex((en) => en.id === entryId);
-  if (ei < 0) return;
-  state.selection.listIndex = li;
-  state.selection.entryIndex = ei;
-  render();
-  const fresh = board.querySelectorAll(".list")[li]?.querySelectorAll(".entry")[ei];
-  if (fresh) editEntry(li, ei, false, caretOffsetFromPoint(x, y, fresh));
-}
-function editListById(listId) {
-  const plan = activePlan();
-  const li = plan.lists.findIndex((l) => l.id === listId);
-  if (li < 0) return;
-  state.selection.listIndex = li;
-  state.selection.entryIndex = -1;
-  render();
-  editList(li);
-}
-
 // ---------- touch ----------
 function setupTouch() {
   if (!state.isTouch) return;
   body.classList.add("touch");
   body.dataset.view = "single";
 
-  // Tapping the board while editing dismisses on pointerdown — the instant the
-  // finger lands, no wait for the synthetic click. Where the tap lands decides
-  // what happens:
-  //   • inside the active field            → leave it (place caret / select text)
-  //   • another entry/header in SAME list  → commit current, open the tapped one
-  //                                          at the tapped spot, right away
-  //   • anywhere else (other list / empty) → commit current + deselect everything
-  //                                          (same as a background tap)
+  // Touching the board while editing only ever *dismisses* the field — it never
+  // opens another one. A touch that lands on an entry is just as likely to be
+  // the start of a scroll as a tap, and there's no telling which at press time.
+  //
+  // The dismissal is therefore deferred to the lift: committing on pointerdown
+  // re-renders the board out from under the gesture, and the <ul> the finger was
+  // about to scroll is detached mid-scroll, so the list freezes. Arming here and
+  // committing on touchend leaves the live DOM alone for the whole gesture —
+  // scrolling works, nothing is selected afterwards, and editing takes a
+  // second, deliberate tap.
+  //
+  // A touch inside the active field is left alone (caret placement / selection).
+  let dismiss = null;
+  const dismissEdit = (swallow) => {
+    // The commit re-renders, so a trailing click would land on a detached node.
+    if (swallow) swallowNextClick();
+    const active = document.activeElement;
+    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) active.blur(); // commit + hide keyboard
+    else { setMode("normal"); render(); } // stuck in insert with no live field — recover
+    deselectOutside();
+  };
+  const endDismiss = (e) => {
+    const start = dismiss;
+    dismiss = null;
+    if (!start || body.dataset.mode !== "insert") return;
+    const t = e.changedTouches?.[0];
+    // A tap fires a trailing click and needs it swallowed; a scroll fires none,
+    // and swallowing there would eat the next real tap instead.
+    const moved = !t || Math.hypot(t.clientX - start.x, t.clientY - start.y) > 10;
+    dismissEdit(!moved);
+  };
+  // Bubble phase, so the swipe handler on `board` runs first and still sees
+  // `insert` — a scroll that drifted sideways must not also switch lists.
+  document.addEventListener("touchend", endDismiss);
+  document.addEventListener("touchcancel", endDismiss);
+
   board.addEventListener("pointerdown", (e) => {
     if (body.dataset.mode === "insert") {
       const active = document.activeElement;
       const editing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
       if (editing && active.contains(e.target)) return;
-
-      const editingSec = editing ? active.closest(".list") : null;
-      const targetSec = e.target.closest(".list");
-      const targetEntry = e.target.closest(".entry");
-      const targetName = e.target.closest(".list-name");
-
-      // The commit re-renders the board, so the trailing click would land on a
-      // detached node — swallow it in every branch and drive the next edit
-      // directly (by id) instead.
-      swallowNextClick();
-
-      if (editingSec && targetSec === editingSec && (targetEntry || targetName)) {
-        const listId = targetSec.dataset.listId;
-        const entryId = targetEntry?.dataset.entryId;
-        const x = e.clientX, y = e.clientY;
-        active.blur(); // commit the in-flight field (its blur handler saves)
-        if (entryId) editEntryById(listId, entryId, x, y);
-        else editListById(listId);
-        return;
-      }
-
-      // Other list, or empty space: behave like a background tap.
-      if (editing) active.blur();           // commit + hide keyboard
-      else { setMode("normal"); render(); } // stuck in insert with no live field — recover
-      deselectOutside();
+      // A mouse on a touch-capable device fires no touchend — dismiss on press.
+      if (e.pointerType !== "touch") { dismissEdit(true); return; }
+      if (!dismiss) dismiss = { x: e.clientX, y: e.clientY }; // extra fingers ride the first one
       return;
     }
     if (e.target.closest(".list")) return; // a real target handles its own tap
