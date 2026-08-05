@@ -4,7 +4,7 @@ Read this first. The README has setup; this file has the design.
 
 ## Stack
 
-Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` + an R2 bucket bound as `PLAN_R2` (entry images) + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and pulls SortableJS from a jsdelivr CDN.
+Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` (data blob *and* entry images) + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and pulls SortableJS from a jsdelivr CDN.
 
 When changing bindings: `npx wrangler types` (then re-run typecheck).
 
@@ -21,25 +21,32 @@ Stored as a single JSON blob at KV key `data`. `src/plan-store.ts` is the only t
 
 ## Images (`src/images.ts`)
 
-One optional image per entry. `Entry.image` holds a uuid; the bytes live in the R2 bucket bound as `PLAN_R2` at `img/<uuid>`. Bytes never go in the blob — it is re-PUT in full on every save.
+One optional image per entry. `Entry.image` holds a uuid; the bytes live in the **same KV namespace** at `img:<uuid>`, with content type and upload time in the key's metadata. Bytes never go in the data blob — it is re-PUT in full on every save.
+
+R2 is the natural home for this and the code was first written against it, but enabling R2 requires a billing subscription on the account even at zero cost. KV needs none, and its 25 MB value ceiling is far above the 10 MB cap here. The price is **eventual consistency**, which is what most of the care below is about. Note the shared namespace: `isImageId` gates every id against a uuid regex so a crafted request can't address `auth:secret`.
 
 **No orphans, ever.** That invariant is enforced on the server, because every interesting failure (undo, a lost 409, a closed tab mid-upload) is one the client can't be trusted to report:
 
-1. **`reconcile` on every `PUT /api/data`** — deletes `refs(current) \ refs(next)`. Every way an image stops being referenced (detach, entry/list/plan delete, undo, overwriting an entry's image) arrives as one blob replacing another, so the set difference catches all of them. Runs *after* `putData` commits: deleting first would risk a live reference to a deleted object, which is worse than an orphan.
-2. **`sweep` on `GET /api/data`** — the backstop for ids that never reached any blob (upload succeeded, then the tab closed or the save lost a 409), which no diff can see. Throttled to one R2 list per 10 min via KV `sweep:at`, and skips objects younger than 15 min so it can't race an upload in flight.
-3. **`dropMissingRefs` before every commit** — the mirror case. Only ids `current` didn't already carry are checked, so a normal save costs nothing and an attach costs one head.
+1. **`reconcile` on every `PUT /api/data`** — deletes `refs(current) \ refs(next)`. Every way an image stops being referenced (detach, entry/list/plan delete, undo, overwriting an entry's image) arrives as one blob replacing another, so the set difference catches all of them. Runs *after* `putData` commits: deleting first would risk a live reference to deleted bytes, which is worse than an orphan.
+2. **`sweep` on `GET /api/data`** — the backstop for ids that never reached any blob (upload succeeded, then the tab closed or the save lost a 409), which no diff can see. Throttled to one list per 10 min via `sweep:at`, and skips keys whose metadata `at` is under 24 h old. That grace is deliberately generous: an image is unreferenced from upload until its save lands, a gap that stretches indefinitely if the client goes offline holding a pending write. Collecting a rare abandoned upload a day late costs nothing; collecting one whose reference was merely in transit is unrecoverable.
 
-The client's only job is to keep references honest:
+There is deliberately **no "does this id exist?" check before committing a reference**. An earlier draft had one; under KV it is actively harmful, since a freshly uploaded id can read as missing and the check would strip the reference to an image that does exist. The client only ever sets a reference after a 201, and `healBrokenImage` handles the genuinely-missing case.
 
-- `scrubHistory()` (called from `save`/`saveNow`) strips from every undo snapshot any image id the live data no longer references, and prunes `imgCache` on the same pass. Without it, Ctrl+Z after a delete would restore a reference to bytes the server has already destroyed. **Consequence: removing an image is not undoable** — undo brings the entry back without its picture.
+The client's job is to keep references honest, and to never act on a stale read:
+
+- `scrubHistory()` (called from `save`/`saveNow`) strips from every undo snapshot any image id the live data no longer references, and prunes `imgCache`/`objectUrls` on the same pass. Without it, Ctrl+Z after a delete would restore a reference to bytes the server has already destroyed. **Consequence: removing an image is not undoable** — undo brings the entry back without its picture.
 - `flushSave()` keeps entries that have an image when stripping blank ones. Dropping one would hide its reference from the server, whose diff would then delete an image still on screen.
-- `healBrokenImage()` drops a reference on a **confirmed 404 only** (verified with a HEAD) — the same `error` event fires for a dropped connection, and discarding a live image over one lost packet can't be undone.
-- An upload that finishes after its entry was deleted `DELETE`s its own object. That endpoint refuses any id the live blob references, so it cannot destroy an image in use.
+- `objectUrls` holds a blob URL for every image uploaded this session and `imgSrc()` prefers it over the network. A read straight after a write can 404, and that miss can stay cached in the colo for up to a minute; rendering from the bytes already in hand skips the window entirely.
+- `healBrokenImage()` drops a reference on a **confirmed 404 only** (verified with a HEAD), and never for an id in `objectUrls` — we uploaded it, so a 404 there is a stale read, not a missing image. The same `error` event also fires for a dropped connection, and discarding a live image over one lost packet can't be undone.
+- `refresh()` and the 409 branch of `flushSave()` both adopt a remote blob only when its version is **strictly newer**. A stale read handing back the blob we just replaced would roll our own edits back, and an image reference lost that way gets its bytes deleted by the next write's diff. A 409 measured against a stale read isn't a real conflict, so the write stays pending and retries instead.
+- An upload that finishes after its entry was deleted `DELETE`s its own image. That route refuses any id the live blob references *and* any id older than an hour, so a stale blob read can't be used to talk it into deleting an established image.
 - `imgCache` reuses one `<img>` element per id across renders, so the full-board repaint doesn't flash every picture. Responses are `immutable`-cached, since an id's bytes never change.
 
 Pasting re-encodes through a canvas to max 1600px WebP (`encodeImage`), keeping whichever of the original/re-encode is smaller, and passing GIFs through untouched so animation survives. Server caps at 10 MB and accepts webp/png/jpeg/gif/avif.
 
 An entry with an image but no text is legal — clearing the field leaves the picture rather than silently destroying it. Deleting the image from a text-less entry removes the entry.
+
+KV free tier is the operating budget: 1 GB stored, 1k writes/day, 100k reads/day. At ~200 KB per re-encoded image that is thousands of images, and one paste is one write.
 
 ⚠️ The `backup:` snapshots that `isDestructive` writes reference images that `reconcile` deletes on that same write. Restoring a week-old backup from the dashboard will therefore bring back entries whose images are gone; `healBrokenImage` clears those references on first paint. Zero orphans was the explicit requirement and this is its cost.
 
@@ -59,8 +66,8 @@ An entry with an image but no text is legal — clearing the field leaves the pi
 |--------|-------------|-------------------------------------------------------|
 | POST   | `/api/auth` | Verify Turnstile, rate-limit, check password, set cookie (403 bad challenge / 429 too many) |
 | GET    | `/api/me`   | 204 if cookie valid, 401 otherwise                    |
-| GET    | `/api/data` | Return full blob (seeds on first read if missing); triggers the throttled R2 sweep |
-| PUT    | `/api/data` | Replace full blob; enforces `Plan` plan exists; drops missing image refs, then deletes newly-unreferenced R2 objects |
+| GET    | `/api/data` | Return full blob (seeds on first read if missing); triggers the throttled image sweep |
+| PUT    | `/api/data` | Replace full blob; enforces `Plan` plan exists; then deletes newly-unreferenced images |
 | POST   | `/api/img`  | Store an image body (≤10 MB, image types only) → `{ id }` |
 | GET/HEAD | `/api/img/<id>` | Fetch one image, immutably cached (HEAD = existence probe) |
 | DELETE | `/api/img/<id>` | Drop one object; **409 if the live blob references it** |
@@ -140,8 +147,8 @@ If you find yourself adding a desktop button, you're doing it wrong — bind a k
 - One render path. Single-view is a CSS state, not a code fork.
 - KV writes are throttled to at most one per `SAVE_INTERVAL` ms (5s); `beforeunload` shows the native unsaved-changes prompt while a write is pending.
 - The session cookie is `HttpOnly` — never read it from JS.
-- R2 holds no object the blob doesn't reference, and the blob holds no reference R2 can't satisfy. Both directions are enforced server-side on every write; the client is never trusted to report a deletion.
+- No `img:` key survives that the blob doesn't reference. Enforced server-side on every write (`reconcile`) with a throttled `sweep` behind it; the client is never trusted to report a deletion.
 
 ## Cloudflare reference
 
-There is no local dev loop — everything runs in production. `npx wrangler deploy` to ship, `npx wrangler types` after binding changes, `npx wrangler secret put TURNSTILE_SECRET` to set the Turnstile secret. The image bucket is created once with `npx wrangler r2 bucket create plan-images`. Workers docs: https://developers.cloudflare.com/workers/. KV docs: https://developers.cloudflare.com/kv/.
+There is no local dev loop — everything runs in production. `npx wrangler deploy` to ship, `npx wrangler types` after binding changes, `npx wrangler secret put TURNSTILE_SECRET` to set the Turnstile secret. Images need no extra setup — they share `PLAN_KV`. Workers docs: https://developers.cloudflare.com/workers/. KV docs: https://developers.cloudflare.com/kv/.

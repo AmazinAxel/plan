@@ -54,8 +54,14 @@ async function flushSave() {
     body: JSON.stringify(cleaned)
   });
   if (res.status === 409) {
-    // Another device wrote first; adopt its state instead of clobbering.
-    applyRemote(await res.json());
+    const remote = await res.json();
+    // Another device wrote first; adopt its state instead of clobbering — but
+    // only if it really is ahead of us. KV reads are eventually consistent, so
+    // the version this rejection was measured against can be the blob we
+    // ourselves replaced a moment ago; adopting that would undo our own edits.
+    // Leave the write pending instead and try again once the read catches up.
+    if (remote.version > (state.data.version ?? 0)) applyRemote(remote);
+    else save();
     return;
   }
   if (res.ok) {
@@ -103,6 +109,11 @@ function scrubHistory() {
     eachEntry(snap.data, (e) => { if (e.image && !live.has(e.image)) delete e.image; });
   }
   for (const id of imgCache.keys()) if (!live.has(id)) imgCache.delete(id);
+  for (const id of objectUrls.keys()) {
+    if (live.has(id)) continue;
+    URL.revokeObjectURL(objectUrls.get(id));
+    objectUrls.delete(id);
+  }
 }
 function undo() {
   const prev = history.pop();
@@ -982,7 +993,7 @@ function openBg() {
 }
 
 // ---------- images ----------
-// One image per entry. The blob stores only an id; the bytes live in R2 behind
+// One image per entry. The blob stores only an id; the bytes live in KV behind
 // /api/img. The server owns deletion — it diffs every write and drops whatever
 // the new blob no longer references — so the client's whole job is to keep the
 // reference honest and never resurrect a dead one (see scrubHistory).
@@ -997,6 +1008,14 @@ const imgUrl = (id) => `/api/img/${id}`;
 const imgCache = new Map();
 const healing = new Set();
 let uploads = 0;
+
+// Blob URLs for images uploaded in this session. KV reads are eventually
+// consistent, so fetching one back straight after storing it can 404 — and a
+// miss can stay cached in that colo for up to a minute. Rendering from the
+// bytes we already have in hand sidesteps the window entirely, and doubles as
+// proof (see healBrokenImage) that these ids exist no matter what a read says.
+const objectUrls = new Map();
+const imgSrc = (id) => objectUrls.get(id) || imgUrl(id);
 
 function eachEntry(data, fn) {
   for (const plan of data?.plans || []) {
@@ -1038,18 +1057,22 @@ function imgFor(id) {
     el = document.createElement("img");
     el.alt = "";
     el.draggable = false; // a native image drag would hijack Sortable's entry drag
-    el.src = imgUrl(id);
+    el.src = imgSrc(id);
     el.addEventListener("error", () => healBrokenImage(id));
     imgCache.set(id, el);
   }
   return el;
 }
 
-// A reference whose object is gone renders as a broken image forever, so drop
+// A reference whose bytes are gone renders as a broken image forever, so drop
 // it — but only on a confirmed 404. The same error event fires for a dropped
 // connection, and discarding a live image over one lost packet is not
 // recoverable.
 async function healBrokenImage(id) {
+  // Uploaded in this session: it exists, whatever a read says. KV is eventually
+  // consistent, so a 404 here would be a stale read, and acting on it would
+  // destroy an image the user just pasted.
+  if (objectUrls.has(id)) return;
   if (healing.has(id)) return;
   healing.add(id);
   try {
@@ -1110,6 +1133,7 @@ async function attachImage(file, listId, entryId) {
   // references, so this can never destroy an image that is actually in use.
   if (!found) { fetch(imgUrl(id), { method: "DELETE" }).catch(() => {}); return; }
 
+  objectUrls.set(id, URL.createObjectURL(blob)); // render from the bytes we already hold
   pushHistory();
   found.entry.image = id;
   saveNow(); // get the reference to the server promptly — until it lands, the object is an orphan
@@ -1169,7 +1193,7 @@ function openImageView(listId, entryId) {
   const found = findEntry(listId, entryId);
   if (!found?.entry.image) return;
   imgView = { id: found.entry.image, listId, entryId };
-  $("img-view-img").src = imgUrl(found.entry.image);
+  $("img-view-img").src = imgSrc(found.entry.image);
   setMode("image");
   $("img-view").showModal();
 }
@@ -1193,7 +1217,9 @@ function openImageViewFromNode(imgEl) {
 
 (function setupImageView() {
   const dlg = $("img-view");
-  const openTab = () => { if (imgView) window.open(imgUrl(imgView.id), "_blank", "noopener"); };
+  // imgSrc, not imgUrl: an image pasted seconds ago may not be readable back
+  // from KV yet, and the in-memory copy always is.
+  const openTab = () => { if (imgView) window.open(imgSrc(imgView.id), "_blank", "noopener"); };
   const remove = () => {
     if (!imgView) return;
     const { listId, entryId } = imgView;
@@ -1625,7 +1651,11 @@ async function refresh() {
   try { res = await fetch("/api/data", { cache: "no-store" }); } catch { return; }
   if (!res.ok) return;
   const remote = await res.json();
-  if (remote.version !== state.data.version) applyRemote(remote);
+  // Strictly newer only. KV reads are eventually consistent, so a refresh right
+  // after a save can hand back the blob we just replaced — adopting that would
+  // roll our own edits back, and an image reference lost that way gets its bytes
+  // deleted by the next write's diff.
+  if (remote.version > (state.data.version ?? 0)) applyRemote(remote);
 }
 
 window.addEventListener("focus", refresh);

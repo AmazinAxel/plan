@@ -16,12 +16,5 @@
 			"id": "a7482a28bc8047c6af8cf4ea9ea77d29",
 			"remote": true
 		}
-	],
-	"r2_buckets": [
-		{
-			"binding": "PLAN_R2",
-			"bucket_name": "plan-images",
-			"remote": true
-		}
 	]
 }
