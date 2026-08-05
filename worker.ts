@@ -1,8 +1,13 @@
 import { buildSessionCookie, checkPassword, verifyRequest } from "./src/auth";
 import { getData, putData, isDestructive, backupData, type Data } from "./src/plan-store";
+import {
+  ALLOWED_TYPES, MAX_IMAGE_BYTES, dropMissingRefs, imageKey, imageRefs, isImageId,
+  reconcile, sweep,
+} from "./src/images";
 
 interface Env {
   PLAN_KV: KVNamespace;
+  PLAN_R2: R2Bucket;
   ASSETS: Fetcher;
   TURNSTILE_SECRET: string;
 }
@@ -87,6 +92,64 @@ async function handleAuth(req: Request, env: Env): Promise<Response> {
   });
 }
 
+// POST /api/img            -> store the body, return { id }
+// GET|DELETE /api/img/<id> -> fetch / drop one object
+async function handleImage(req: Request, env: Env, id: string): Promise<Response> {
+  if (req.method === "POST") {
+    if (id) return new Response(null, { status: 404 });
+    const type = (req.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+    if (!ALLOWED_TYPES.has(type)) return json({ error: "unsupported type" }, { status: 415 });
+    // Reject on the declared length before buffering the body into memory.
+    const declared = Number(req.headers.get("Content-Length") || 0);
+    if (declared > MAX_IMAGE_BYTES) return json({ error: "too large" }, { status: 413 });
+    const bytes = await req.arrayBuffer();
+    if (bytes.byteLength === 0) return json({ error: "empty" }, { status: 400 });
+    if (bytes.byteLength > MAX_IMAGE_BYTES) return json({ error: "too large" }, { status: 413 });
+    const newId = crypto.randomUUID();
+    await env.PLAN_R2.put(imageKey(newId), bytes, { httpMetadata: { contentType: type } });
+    return json({ id: newId }, { status: 201 });
+  }
+
+  if (!isImageId(id)) return new Response(null, { status: 404 });
+
+  // HEAD is how the client confirms a broken <img> is genuinely a missing
+  // object rather than a dropped connection, before it drops the reference.
+  if (req.method === "HEAD") {
+    const meta = await env.PLAN_R2.head(imageKey(id));
+    return new Response(null, { status: meta ? 200 : 404 });
+  }
+
+  if (req.method === "GET") {
+    const obj = await env.PLAN_R2.get(imageKey(id));
+    if (!obj) return new Response(null, { status: 404 });
+    // Ids are unique per upload and objects are never rewritten, so the bytes at
+    // a given URL can't change — the browser may keep them forever. That matters
+    // here: render() rebuilds the whole board on every keystroke, so each repaint
+    // would otherwise re-request every visible image.
+    return new Response(obj.body, {
+      headers: {
+        "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
+        "Cache-Control": "private, max-age=31536000, immutable",
+        "ETag": obj.httpEtag,
+      },
+    });
+  }
+
+  // Only used for the narrow case of an upload whose reference never made it
+  // into the blob (the entry was deleted while the bytes were still uploading).
+  // Guarded against every other use: if the live blob references this id, the
+  // object is in use and the request is refused, so a buggy or hostile client
+  // cannot delete an image that is still on screen.
+  if (req.method === "DELETE") {
+    const data = await getData(env.PLAN_KV);
+    if (imageRefs(data).has(id)) return json({ error: "referenced" }, { status: 409 });
+    await env.PLAN_R2.delete(imageKey(id));
+    return new Response(null, { status: 204 });
+  }
+
+  return new Response(null, { status: 405 });
+}
+
 async function requireAuth(req: Request, env: Env): Promise<boolean> {
   const secret = await getSecret(env);
   if (!secret) return false;
@@ -94,7 +157,7 @@ async function requireAuth(req: Request, env: Env): Promise<boolean> {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -103,8 +166,18 @@ export default {
     if (path.startsWith("/api/")) {
       if (!(await requireAuth(req, env))) return new Response(null, { status: 401 });
 
+      if (path === "/api/img" || path.startsWith("/api/img/")) {
+        return handleImage(req, env, path.slice("/api/img/".length));
+      }
+
       if (path === "/api/data") {
-        if (req.method === "GET") return json(await getData(env.PLAN_KV));
+        if (req.method === "GET") {
+          const data = await getData(env.PLAN_KV);
+          // Collect anything the PUT-time diff couldn't see (an upload whose
+          // save never landed). Throttled internally; runs after the response.
+          ctx.waitUntil(sweep(env.PLAN_KV, env.PLAN_R2, data));
+          return json(data);
+        }
         if (req.method === "PUT") {
           let body: Data;
           try { body = await req.json(); } catch { return json({ error: "bad body" }, { status: 400 }); }
@@ -117,12 +190,18 @@ export default {
             return json(current, { status: 409, headers: { "X-Plan-Version": String(current.version) } });
           }
           const next = { ...body, version: current.version + 1 };
+          // Never commit a reference to an object that isn't there.
+          if (Array.isArray(next.plans)) await dropMissingRefs(env.PLAN_R2, current, next);
           // Snapshot the state being replaced when this write deletes a plan or
           // list, so it can be rolled back from the Cloudflare KV dashboard.
           if (isDestructive(current, next)) await backupData(env.PLAN_KV, current);
           try { await putData(env.PLAN_KV, next); } catch (e) {
             return json({ error: (e as Error).message }, { status: 400 });
           }
+          // Strictly after the blob is committed: any image this write drops is
+          // now unreachable, and deleting before the commit would risk leaving a
+          // live reference pointing at a deleted object.
+          ctx.waitUntil(reconcile(env.PLAN_R2, current, next));
           return new Response(null, { status: 204, headers: { "X-Plan-Version": String(next.version) } });
         }
         return new Response(null, { status: 405 });

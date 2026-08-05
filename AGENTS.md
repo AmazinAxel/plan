@@ -4,20 +4,44 @@ Read this first. The README has setup; this file has the design.
 
 ## Stack
 
-Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and pulls SortableJS from a jsdelivr CDN.
+Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` + an R2 bucket bound as `PLAN_R2` (entry images) + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and pulls SortableJS from a jsdelivr CDN.
 
 When changing bindings: `npx wrangler types` (then re-run typecheck).
 
 ## Data model
 
 ```ts
-type Entry = { id: string; text: string };
+type Entry = { id: string; text: string; todo?: boolean; image?: string };
 type List  = { id: string; name: string; entries: Entry[] };
-type Plan  = { id: string; name: string; lists: List[] };
-type Data  = { activePlanId: string; plans: Plan[] };
+type Plan  = { id: string; name: string; lists: List[]; background?: string };
+type Data  = { activePlanId: string; plans: Plan[]; version: number };
 ```
 
 Stored as a single JSON blob at KV key `data`. `src/plan-store.ts` is the only thing that touches it. The plan named exactly `Plan` is special: enforced to exist by `putData`, and the client refuses to delete it.
+
+## Images (`src/images.ts`)
+
+One optional image per entry. `Entry.image` holds a uuid; the bytes live in the R2 bucket bound as `PLAN_R2` at `img/<uuid>`. Bytes never go in the blob — it is re-PUT in full on every save.
+
+**No orphans, ever.** That invariant is enforced on the server, because every interesting failure (undo, a lost 409, a closed tab mid-upload) is one the client can't be trusted to report:
+
+1. **`reconcile` on every `PUT /api/data`** — deletes `refs(current) \ refs(next)`. Every way an image stops being referenced (detach, entry/list/plan delete, undo, overwriting an entry's image) arrives as one blob replacing another, so the set difference catches all of them. Runs *after* `putData` commits: deleting first would risk a live reference to a deleted object, which is worse than an orphan.
+2. **`sweep` on `GET /api/data`** — the backstop for ids that never reached any blob (upload succeeded, then the tab closed or the save lost a 409), which no diff can see. Throttled to one R2 list per 10 min via KV `sweep:at`, and skips objects younger than 15 min so it can't race an upload in flight.
+3. **`dropMissingRefs` before every commit** — the mirror case. Only ids `current` didn't already carry are checked, so a normal save costs nothing and an attach costs one head.
+
+The client's only job is to keep references honest:
+
+- `scrubHistory()` (called from `save`/`saveNow`) strips from every undo snapshot any image id the live data no longer references, and prunes `imgCache` on the same pass. Without it, Ctrl+Z after a delete would restore a reference to bytes the server has already destroyed. **Consequence: removing an image is not undoable** — undo brings the entry back without its picture.
+- `flushSave()` keeps entries that have an image when stripping blank ones. Dropping one would hide its reference from the server, whose diff would then delete an image still on screen.
+- `healBrokenImage()` drops a reference on a **confirmed 404 only** (verified with a HEAD) — the same `error` event fires for a dropped connection, and discarding a live image over one lost packet can't be undone.
+- An upload that finishes after its entry was deleted `DELETE`s its own object. That endpoint refuses any id the live blob references, so it cannot destroy an image in use.
+- `imgCache` reuses one `<img>` element per id across renders, so the full-board repaint doesn't flash every picture. Responses are `immutable`-cached, since an id's bytes never change.
+
+Pasting re-encodes through a canvas to max 1600px WebP (`encodeImage`), keeping whichever of the original/re-encode is smaller, and passing GIFs through untouched so animation survives. Server caps at 10 MB and accepts webp/png/jpeg/gif/avif.
+
+An entry with an image but no text is legal — clearing the field leaves the picture rather than silently destroying it. Deleting the image from a text-less entry removes the entry.
+
+⚠️ The `backup:` snapshots that `isDestructive` writes reference images that `reconcile` deletes on that same write. Restoring a week-old backup from the dashboard will therefore bring back entries whose images are gone; `healBrokenImage` clears those references on first paint. Zero orphans was the explicit requirement and this is its cost.
 
 ## Auth
 
@@ -35,8 +59,11 @@ Stored as a single JSON blob at KV key `data`. `src/plan-store.ts` is the only t
 |--------|-------------|-------------------------------------------------------|
 | POST   | `/api/auth` | Verify Turnstile, rate-limit, check password, set cookie (403 bad challenge / 429 too many) |
 | GET    | `/api/me`   | 204 if cookie valid, 401 otherwise                    |
-| GET    | `/api/data` | Return full blob (seeds on first read if missing)     |
-| PUT    | `/api/data` | Replace full blob; enforces `Plan` plan exists        |
+| GET    | `/api/data` | Return full blob (seeds on first read if missing); triggers the throttled R2 sweep |
+| PUT    | `/api/data` | Replace full blob; enforces `Plan` plan exists; drops missing image refs, then deletes newly-unreferenced R2 objects |
+| POST   | `/api/img`  | Store an image body (≤10 MB, image types only) → `{ id }` |
+| GET/HEAD | `/api/img/<id>` | Fetch one image, immutably cached (HEAD = existence probe) |
+| DELETE | `/api/img/<id>` | Drop one object; **409 if the live blob references it** |
 
 Everything else falls through to `env.ASSETS.fetch(req)`.
 
@@ -46,7 +73,7 @@ Four concerns, in this order in the file:
 
 1. **State + persistence** — `state.data` mirrors the server. `save()` debounces 300ms; `saveNow()` flushes on mode transitions.
 2. **Render** — one `render()` rebuilds `<main>` from scratch each call. The data set is tiny; do not optimize prematurely.
-3. **Modes** — `body.dataset.mode` is `"normal" | "insert" | "palette" | "confirm"`. The desktop keyboard handler is a no-op in any non-`normal` mode. Exiting back to `normal` calls `saveNow()`.
+3. **Modes** — `body.dataset.mode` is `"normal" | "insert" | "palette" | "confirm" | "image"`. The desktop keyboard handler is a no-op in any non-`normal` mode. Exiting back to `normal` calls `saveNow()`.
    - **Undo** — `pushHistory()` deep-clones `state.data` + `selection` onto a 5-deep stack right before each mutating action; `undo()` (Ctrl+Z, normal mode only) pops and restores. Restored snapshots keep the live `state.data.version` so the next save doesn't 409. Abandoned creations (a new entry/list created then cancelled) call `popHistory()` to discard their snapshot, so undo never replays a no-op. `applyRemote()` clears the stack — its snapshots are relative to the superseded blob.
 4. **Drag** — SortableJS, two groups (`"lists"` horizontal, `"entries"` for items). Single-view disables cross-list drag by setting `pull/put: false` — same render path, just an option flip.
 
@@ -66,6 +93,9 @@ Four concerns, in this order in the file:
 | `b`      | Set / clear background image URL for current plan                |
 | `Space`  | Plan palette — fuzzy match, Enter switches plan. Always shows a `<New plan>` row at the bottom which opens the new-plan confirm dialog. |
 | `v`      | Toggle multi-list / single-list view (desktop only)              |
+| `o`      | Open the selected entry's image in the full-screen preview       |
+| Ctrl+V   | Attach a clipboard image to the selected entry (replaces any existing one). Also works while editing — that's how mobile attaches, via the long-press paste menu. |
+| Ctrl+Shift+V | Remove the selected entry's image. Normal mode only, so it doesn't shadow paste-as-plain-text while editing. Not undoable. |
 | Ctrl+Z   | Undo the last mutating action (create/delete/edit/reorder/move/bg). Up to 5 deep. |
 | Ctrl+C   | Copy the selected entry's text                                   |
 | Esc      | Forces save (insert/palette/confirm modals handle their own close) |
@@ -87,6 +117,7 @@ Four concerns, in this order in the file:
 - Tap a list's header (`.list-name`) to select that list (`entryIndex = -1`); useful in multi-list view for picking a list to edit or delete.
 - Bottom action bar exposes `del-plan`, `new-list`, `del-list`, `toggle-todo` (the last mirrors desktop `Tab` — mark/unmark the selected entry). New plans are created from the palette's `<New plan>` row, not the action bar.
 - Single-list view wraps when paging past either end (swipe / arrows / desktop drag-cycle all route through `move`); multi-list view clamps.
+- Tap an entry's image to open the preview. It fills the viewport over a faded backdrop and carries its own bottom bar (`#img-actions` — open in new tab / delete image), because the real `#actions` sits behind the dialog's backdrop. Tapping anywhere that isn't the picture or that bar closes it — `#img-view` needs its own close handler rather than `attachBackdropClose`, since the letterboxing around a contained image would otherwise hit the `<img>`, not the dialog. Desktop drives the same dialog with `Delete`/`Backspace`, `n` (new tab) and `Esc`.
 - All modal dialogs close on backdrop tap. Anything that dismisses a modal on `pointerdown` (backdrop, palette rows via `fastTap`, `.confirm-btn`) calls `swallowNextClick()` so the trailing click doesn't fall through to the board behind it.
 
 ## Styling — `public/styles.css`
@@ -109,7 +140,8 @@ If you find yourself adding a desktop button, you're doing it wrong — bind a k
 - One render path. Single-view is a CSS state, not a code fork.
 - KV writes are throttled to at most one per `SAVE_INTERVAL` ms (5s); `beforeunload` shows the native unsaved-changes prompt while a write is pending.
 - The session cookie is `HttpOnly` — never read it from JS.
+- R2 holds no object the blob doesn't reference, and the blob holds no reference R2 can't satisfy. Both directions are enforced server-side on every write; the client is never trusted to report a deletion.
 
 ## Cloudflare reference
 
-There is no local dev loop — everything runs in production. `npx wrangler deploy` to ship, `npx wrangler types` after binding changes, `npx wrangler secret put TURNSTILE_SECRET` to set the Turnstile secret. Workers docs: https://developers.cloudflare.com/workers/. KV docs: https://developers.cloudflare.com/kv/.
+There is no local dev loop — everything runs in production. `npx wrangler deploy` to ship, `npx wrangler types` after binding changes, `npx wrangler secret put TURNSTILE_SECRET` to set the Turnstile secret. The image bucket is created once with `npx wrangler r2 bucket create plan-images`. Workers docs: https://developers.cloudflare.com/workers/. KV docs: https://developers.cloudflare.com/kv/.

@@ -38,9 +38,12 @@ async function flushSave() {
   savePending = false;
   lastSaveAt = Date.now();
   // Strip blank entries on a clone, so an in-progress edit survives in memory.
+  // An entry carrying an image is never blank — the picture is its content, and
+  // dropping it here would hide the reference from the server, whose orphan
+  // diff would then delete an image the client is still showing.
   const cleaned = JSON.parse(JSON.stringify(state.data));
   cleaned.plans.forEach((p) => p.lists.forEach((l) => {
-    l.entries = l.entries.filter((e) => e.text && e.text.trim());
+    l.entries = l.entries.filter((e) => (e.text && e.text.trim()) || e.image);
   }));
   const res = await fetch("/api/data", {
     method: "PUT",
@@ -61,12 +64,14 @@ async function flushSave() {
   }
 }
 function save() {
+  scrubHistory();
   savePending = true;
   if (saveTimer) return;
   const wait = Math.max(0, SAVE_INTERVAL - (Date.now() - lastSaveAt));
   saveTimer = setTimeout(flushSave, wait);
 }
 function saveNow() {
+  scrubHistory();
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   savePending = true;
   return flushSave();
@@ -87,6 +92,18 @@ function pushHistory() {
 // Drop the most recent snapshot — used when an action is abandoned (e.g. a new
 // entry/list created then cancelled), so undo doesn't replay a no-op.
 function popHistory() { history.pop(); }
+// The server deletes an image the moment the blob stops referencing it, so a
+// snapshot must never hold a reference the live data has dropped — undoing into
+// one would restore a permanently broken image. Runs on every save, which is
+// the only thing that can make an id unreferenced. The element cache is pruned
+// on the same pass for the same reason.
+function scrubHistory() {
+  const live = liveImageIds();
+  for (const snap of history) {
+    eachEntry(snap.data, (e) => { if (e.image && !live.has(e.image)) delete e.image; });
+  }
+  for (const id of imgCache.keys()) if (!live.has(id)) imgCache.delete(id);
+}
 function undo() {
   const prev = history.pop();
   if (!prev) return;
@@ -147,6 +164,9 @@ function render() {
       it.className = "entry";
       it.dataset.entryId = e.id;
       it.textContent = e.text;
+      // Appended after the text, so `it.firstChild` stays the text node that
+      // caretOffsetFromPoint measures against.
+      if (e.image) it.appendChild(imgFor(e.image));
       if (/^-{2,}(\s.*\s-{2,})?$/.test(e.text)) it.dataset.sep = "";
       if (e.todo) it.dataset.todo = "";
       if (li === state.selection.listIndex && ei === state.selection.entryIndex) it.dataset.selected = "";
@@ -461,11 +481,15 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   setDragEnabled(false);
   const sec = board.querySelectorAll(".list")[listIndex];
   const it = sec.querySelectorAll(".entry")[entryIndex];
+  // Only the text is replaced by the field — an attached image stays visible
+  // while its entry is being edited.
+  const img = it.querySelector("img");
   it.textContent = "";
   const input = document.createElement("textarea");
   input.value = entry.text;
   input.rows = 1;
   it.appendChild(input);
+  if (img) it.appendChild(img);
   const resize = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
   input.addEventListener("input", resize);
   resize();
@@ -486,9 +510,12 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   const commit = () => {
     stopKeep();
     const v = input.value.trim();
-    if (isNew) { if (!v) popHistory(); } // abandoned new entry — discard its snapshot
+    if (isNew) { if (!v && !entry.image) popHistory(); } // abandoned new entry — discard its snapshot
     else if (v !== entry.text) pushHistory();
     if (v) entry.text = v;
+    // An entry that carries an image survives an empty field — the picture is
+    // the content. Splicing it would destroy the image along with it.
+    else if (entry.image) entry.text = "";
     else list.entries.splice(entryIndex, 1);
     // Mobile: once a new entry has been saved in this list, later entries chain.
     if (isNew && v) state.firstEntryMade = true;
@@ -523,7 +550,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
     }
     else if (e.key === "Escape") {
       e.preventDefault(); cancelled = true; stopKeep(); state.chainArmed = false;
-      if (!entry.text) { list.entries.splice(entryIndex, 1); if (isNew) popHistory(); save(); }
+      if (!entry.text && !entry.image) { list.entries.splice(entryIndex, 1); if (isNew) popHistory(); save(); }
       setMode("normal"); render();
     }
     e.stopPropagation();
@@ -954,6 +981,240 @@ function openBg() {
   input.focus();
 }
 
+// ---------- images ----------
+// One image per entry. The blob stores only an id; the bytes live in R2 behind
+// /api/img. The server owns deletion — it diffs every write and drops whatever
+// the new blob no longer references — so the client's whole job is to keep the
+// reference honest and never resurrect a dead one (see scrubHistory).
+const IMG_MAX_DIM = 1600;
+const IMG_MAX_BYTES = 10 * 1024 * 1024; // matches MAX_IMAGE_BYTES in src/images.ts
+const IMG_TYPES = new Set(["image/webp", "image/png", "image/jpeg", "image/gif", "image/avif"]);
+const imgUrl = (id) => `/api/img/${id}`;
+
+// render() rebuilds the whole board on every keystroke; reusing the same <img>
+// element per id means a repaint re-parents an already-decoded image instead of
+// creating a fresh one that flashes while the browser re-reads its cache.
+const imgCache = new Map();
+const healing = new Set();
+let uploads = 0;
+
+function eachEntry(data, fn) {
+  for (const plan of data?.plans || []) {
+    for (const list of plan.lists || []) {
+      for (const entry of list.entries || []) fn(entry, list, plan);
+    }
+  }
+}
+
+function liveImageIds() {
+  const ids = new Set();
+  eachEntry(state.data, (e) => { if (e.image) ids.add(e.image); });
+  return ids;
+}
+
+// Resolve by id, not index: an upload finishes long after the paste, by which
+// point the board may have been re-rendered, reordered, or switched plans.
+function findEntry(listId, entryId) {
+  for (const plan of state.data.plans || []) {
+    for (const list of plan.lists || []) {
+      if (list.id !== listId) continue;
+      const entry = list.entries.find((x) => x.id === entryId);
+      if (entry) return { list, entry };
+    }
+  }
+  return null;
+}
+
+function selectedEntryIds() {
+  const plan = activePlan();
+  const list = plan?.lists[state.selection.listIndex];
+  const entry = list && state.selection.entryIndex >= 0 ? list.entries[state.selection.entryIndex] : null;
+  return entry ? { listId: list.id, entryId: entry.id } : null;
+}
+
+function imgFor(id) {
+  let el = imgCache.get(id);
+  if (!el) {
+    el = document.createElement("img");
+    el.alt = "";
+    el.draggable = false; // a native image drag would hijack Sortable's entry drag
+    el.src = imgUrl(id);
+    el.addEventListener("error", () => healBrokenImage(id));
+    imgCache.set(id, el);
+  }
+  return el;
+}
+
+// A reference whose object is gone renders as a broken image forever, so drop
+// it — but only on a confirmed 404. The same error event fires for a dropped
+// connection, and discarding a live image over one lost packet is not
+// recoverable.
+async function healBrokenImage(id) {
+  if (healing.has(id)) return;
+  healing.add(id);
+  try {
+    const res = await fetch(imgUrl(id), { method: "HEAD", cache: "no-store" });
+    if (res.status !== 404) { healing.delete(id); return; }
+  } catch { healing.delete(id); return; }
+  imgCache.delete(id);
+  let changed = false;
+  eachEntry(state.data, (e) => { if (e.image === id) { delete e.image; changed = true; } });
+  if (changed) { save(); render(); }
+}
+
+// Downscale and re-encode before upload: a pasted screenshot is routinely 4MB
+// of PNG that renders into a ~300px column. Returns null when nothing usable
+// came out, so the caller can bail instead of uploading something the worker
+// will reject.
+async function encodeImage(file) {
+  // A canvas round-trip flattens an animated GIF to its first frame.
+  if (file.type === "image/gif") return file.size <= IMG_MAX_BYTES ? file : null;
+  let out = null;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, IMG_MAX_DIM / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bmp.width * scale));
+    canvas.height = Math.max(1, Math.round(bmp.height * scale));
+    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    bmp.close();
+    // Browsers without WebP encoding fall back to PNG here, which is also fine.
+    out = await new Promise((r) => canvas.toBlob(r, "image/webp", 0.85));
+  } catch { out = null; }
+  const original = IMG_TYPES.has(file.type) && file.size <= IMG_MAX_BYTES ? file : null;
+  if (!out || !IMG_TYPES.has(out.type) || out.size > IMG_MAX_BYTES) return original;
+  // Re-encoding a small image can make it bigger; keep whichever is smaller.
+  return original && original.size <= out.size ? original : out;
+}
+
+async function attachImage(file, listId, entryId) {
+  const blob = await encodeImage(file);
+  if (!blob) return;
+  uploads++;
+  let id = null;
+  try {
+    const res = await fetch("/api/img", {
+      method: "POST",
+      headers: { "Content-Type": blob.type },
+      body: blob
+    });
+    if (res.ok) id = (await res.json()).id;
+  } catch { /* offline — nothing was stored */ }
+  finally { uploads--; }
+  if (!id) return;
+
+  const found = findEntry(listId, entryId);
+  // The entry can be deleted while the bytes are still going up, in which case
+  // nothing will ever reference this object. Drop it now rather than leaving it
+  // for the server's sweep. The endpoint refuses any id the live blob
+  // references, so this can never destroy an image that is actually in use.
+  if (!found) { fetch(imgUrl(id), { method: "DELETE" }).catch(() => {}); return; }
+
+  pushHistory();
+  found.entry.image = id;
+  saveNow(); // get the reference to the server promptly — until it lands, the object is an orphan
+  if (body.dataset.mode === "insert") {
+    // Mid-edit: render() would tear out the live textarea, so patch the node.
+    const li = board.querySelector(`.entry[data-entry-id="${entryId}"]`);
+    if (li) { li.querySelector("img")?.remove(); li.appendChild(imgFor(id)); }
+  } else render();
+}
+
+// Dropping the reference is the whole operation — the server deletes the object
+// when it sees the new blob. Deliberately not undoable: the bytes are gone, so a
+// restored reference could only render as a broken image, which is why
+// scrubHistory strips the id from every snapshot on the save below.
+function detachImage(listId, entryId) {
+  const found = findEntry(listId, entryId);
+  if (!found?.entry.image) return;
+  delete found.entry.image;
+  // An entry that was only ever an image has nothing left to show. render()
+  // re-clamps the selection afterwards.
+  if (!found.entry.text) found.list.entries.splice(found.list.entries.indexOf(found.entry), 1);
+  saveNow();
+  render();
+}
+
+// Where a pasted image lands: the entry being edited, or the selected one.
+// Editing a list name has no entry, so an image paste there is ignored.
+function pasteTarget() {
+  if (body.dataset.mode === "insert") {
+    const li = document.activeElement?.closest?.(".entry");
+    const sec = li?.closest(".list");
+    return li && sec ? { listId: sec.dataset.listId, entryId: li.dataset.entryId } : null;
+  }
+  return selectedEntryIds();
+}
+
+// Ctrl+V with an image on the clipboard. Works the same on mobile, where the
+// long-press paste menu delivers the same event into the open textarea.
+document.addEventListener("paste", (e) => {
+  const mode = body.dataset.mode;
+  if (mode !== "normal" && mode !== "insert") return;
+  const file = [...(e.clipboardData?.items || [])]
+    .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
+    .map((i) => i.getAsFile())
+    .find(Boolean);
+  if (!file) return; // ordinary text paste — leave it to the browser
+  const target = pasteTarget();
+  if (!target) return;
+  e.preventDefault();
+  attachImage(file, target.listId, target.entryId);
+});
+
+// ---------- image preview ----------
+let imgView = null; // { id, listId, entryId } while the preview is open
+
+function openImageView(listId, entryId) {
+  const found = findEntry(listId, entryId);
+  if (!found?.entry.image) return;
+  imgView = { id: found.entry.image, listId, entryId };
+  $("img-view-img").src = imgUrl(found.entry.image);
+  setMode("image");
+  $("img-view").showModal();
+}
+
+// Clicking/tapping an entry's image opens it, and selects the entry so the
+// preview's delete acts on something the board also shows as selected.
+function openImageViewFromNode(imgEl) {
+  const li = imgEl.closest(".entry");
+  const sec = li?.closest(".list");
+  if (!li || !sec) return;
+  const plan = activePlan();
+  const listIndex = plan.lists.findIndex((l) => l.id === sec.dataset.listId);
+  if (listIndex < 0) return;
+  const entryIndex = plan.lists[listIndex].entries.findIndex((en) => en.id === li.dataset.entryId);
+  if (entryIndex < 0) return;
+  state.selection.listIndex = listIndex;
+  state.selection.entryIndex = entryIndex;
+  render();
+  openImageView(sec.dataset.listId, li.dataset.entryId);
+}
+
+(function setupImageView() {
+  const dlg = $("img-view");
+  const openTab = () => { if (imgView) window.open(imgUrl(imgView.id), "_blank", "noopener"); };
+  const remove = () => {
+    if (!imgView) return;
+    const { listId, entryId } = imgView;
+    dlg.close();
+    detachImage(listId, entryId);
+  };
+  dlg.addEventListener("keydown", (e) => {
+    if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); remove(); }
+    else if (e.key === "n" || e.key === "N") { e.preventDefault(); openTab(); }
+    // Escape closes natively.
+  });
+  dlg.addEventListener("close", () => {
+    imgView = null;
+    // Release the decoded copy the dialog was holding; the board keeps its own.
+    $("img-view-img").removeAttribute("src");
+    setMode("normal");
+  });
+  fastTap($("img-open"), openTab);
+  fastTap($("img-del"), remove);
+})();
+
 // Clicking anywhere while not editing ends the Enter-chain burst.
 document.addEventListener("pointerdown", () => {
   if (body.dataset.mode === "normal") state.chainArmed = false;
@@ -991,6 +1252,7 @@ board.addEventListener("click", (e) => {
 board.addEventListener("click", (e) => {
   if (state.isTouch) return;
   if (body.dataset.mode !== "normal") return;
+  if (e.target.matches(".entry img")) { openImageViewFromNode(e.target); return; }
   const entry = e.target.closest(".entry");
   if (!entry) return;
   const sec = entry.closest(".list");
@@ -1049,6 +1311,14 @@ document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
     e.preventDefault(); undo(); return;
   }
+  // Ctrl+Shift+V — remove the selected entry's image. Normal mode only, so it
+  // doesn't shadow paste-as-plain-text while editing.
+  if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "v" || e.key === "V")) {
+    e.preventDefault();
+    const sel = selectedEntryIds();
+    if (sel) detachImage(sel.listId, sel.entryId);
+    return;
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return; // let browser shortcuts (Ctrl+R, etc.) through
   if (e.key !== "Enter") state.chainArmed = false; // anything but a straight Enter run ends the burst
 
@@ -1079,6 +1349,12 @@ document.addEventListener("keydown", (e) => {
       else editList(state.selection.listIndex);
       break;
     case "r": e.preventDefault(); deleteCurrentPlan(); break;
+    case "o": {
+      e.preventDefault();
+      const sel = selectedEntryIds();
+      if (sel) openImageView(sel.listId, sel.entryId);
+      break;
+    }
     case " ": e.preventDefault(); openPalette(); break;
     case "v":
       if (state.isTouch) break;
@@ -1197,6 +1473,7 @@ function setupTouch() {
   // click, so it only triggers on a genuine tap.
   board.addEventListener("click", (e) => {
     if (body.dataset.mode !== "normal") return; // already editing — let the field handle the tap
+    if (e.target.matches(".entry img")) { openImageViewFromNode(e.target); return; }
     const name = e.target.closest(".list-name");
     if (name) {
       const sec = name.closest(".list");
@@ -1262,6 +1539,15 @@ function setupTouch() {
 
 // Backdrop click closes a dialog (mobile expectation).
 ["palette", "new-plan", "confirm", "bg"].forEach((id) => attachBackdropClose($(id)));
+
+// The preview fills the viewport, so its "backdrop" is everything that isn't
+// the picture or the action bar — attachBackdropClose's `target === dialog`
+// test would miss the letterboxing around a contained image.
+$("img-view").addEventListener("pointerdown", (e) => {
+  if (e.target === $("img-view-img") || e.target.closest("#img-actions")) return;
+  if (state.isTouch) swallowNextClick();
+  $("img-view").close();
+});
 
 // Modal Confirm buttons submit on pointerdown so they react on press, not on the
 // delayed click. preventDefault stops the trailing click from submitting twice.
@@ -1334,7 +1620,7 @@ function applyRemote(remote) {
 // editing or with an unsaved change, to avoid stomping in-progress work.
 async function refresh() {
   if (!state.data.plans.length) return; // not booted yet
-  if (savePending || body.dataset.mode === "insert") return;
+  if (savePending || uploads > 0 || body.dataset.mode === "insert") return;
   let res;
   try { res = await fetch("/api/data", { cache: "no-store" }); } catch { return; }
   if (!res.ok) return;
@@ -1347,8 +1633,10 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") refresh();
 });
 
+// An in-flight upload is guarded too: leaving before its reference is saved
+// would strand the object in R2 until the server's next sweep.
 window.addEventListener("beforeunload", (e) => {
-  if (savePending) { e.preventDefault(); e.returnValue = ""; }
+  if (savePending || uploads > 0) { e.preventDefault(); e.returnValue = ""; }
 });
 
 // /api/data 401s when unauthed and loadData() falls back to showAuth(), so we

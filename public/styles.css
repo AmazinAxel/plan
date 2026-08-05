@@ -357,6 +357,58 @@ body[data-mode="insert"] .entry[data-selected][data-todo] {
   -webkit-touch-callout: default;
 }
 
+/* An entry's image: never wider than the list, never taller than a fraction of
+   the viewport, and never upscaled — so a large image is fit down to the column
+   and a small one keeps its size, centered either way. */
+.entry img {
+  display: block;
+  margin: 8px auto 0;
+  max-width: 100%;
+  max-height: 40vh;
+  object-fit: contain;
+  -webkit-user-drag: none;
+}
+
+/* full-screen image preview */
+#img-view {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+#img-view[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+#img-view::backdrop {
+  background: rgba(0, 0, 0, 0.82);
+}
+
+/* The image is sized by its own box rather than stretched to fill, so the empty
+   space around it belongs to the wrapper — which lets the close handler tell a
+   tap on the picture apart from a tap beside it. */
+#img-view-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+#img-view-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 /* hide list scrollbars while dragging entries between lists */
 body.dragging .entries {
   scrollbar-width: none;
@@ -411,6 +463,7 @@ body[data-view="multi"] #dots {
 /* default (desktop): hide mobile-only chrome */
 #actions,
 #nav-toggle,
+#img-actions,
 .confirm-btn {
   display: none;
 }
@@ -514,7 +567,22 @@ body.touch.nav-open #nav-toggle svg {
   transform: rotate(180deg);
 }
 
-body.touch #actions button {
+/* The preview covers #actions, so it carries its own copy of the bottom bar —
+   same shape, image-specific buttons. */
+body.touch #img-actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  height: 56px;
+  padding: 0 10px;
+  border-top: 0.2rem solid var(--border);
+  background: var(--surface);
+}
+
+body.touch #actions button,
+body.touch #img-actions button {
   flex: 1 1 0;
   min-width: 0;
   max-width: 180px;
