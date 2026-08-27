@@ -129,6 +129,12 @@ function undo() {
 function setMode(mode) { body.dataset.mode = mode; }
 
 // ---------- render ----------
+// Mobile keyboards autocorrect a typed `--` into an em dash, which would make
+// section headers untypable on a phone. Fold em/en dashes back to `--` on the
+// way in so both spellings mean the same thing.
+const undash = (s) => s.replace(/[—–]/g, "--");
+const isSep = (s) => /^-{2,}(\s.*\s-{2,})?$/.test(s);
+
 function render() {
   const plan = activePlan();
   if (!plan) { board.innerHTML = ""; return; }
@@ -178,7 +184,7 @@ function render() {
       // Appended after the text, so `it.firstChild` stays the text node that
       // caretOffsetFromPoint measures against.
       if (e.image) it.appendChild(imgFor(e.image));
-      if (/^-{2,}(\s.*\s-{2,})?$/.test(e.text)) it.dataset.sep = "";
+      if (isSep(e.text)) it.dataset.sep = "";
       if (e.todo) it.dataset.todo = "";
       if (li === state.selection.listIndex && ei === state.selection.entryIndex) it.dataset.selected = "";
       ul.appendChild(it);
@@ -502,8 +508,13 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   it.appendChild(input);
   if (img) it.appendChild(img);
   const resize = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
-  input.addEventListener("input", resize);
+  // Separator styling follows the field as you type, instead of appearing only
+  // after the commit re-renders. Just an attribute flip on the <li> already in
+  // the DOM — no re-render, no measurable cost.
+  const syncSep = () => { it.toggleAttribute("data-sep", isSep(undash(input.value.trim()))); };
+  input.addEventListener("input", () => { resize(); syncSep(); });
   resize();
+  syncSep();
   input.focus();
   const caret = caretPos != null && caretPos >= 0 && caretPos <= input.value.length
     ? caretPos : input.value.length;
@@ -520,7 +531,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   let armsChain = false;
   const commit = () => {
     stopKeep();
-    const v = input.value.trim();
+    const v = undash(input.value.trim());
     if (isNew) { if (!v && !entry.image) popHistory(); } // abandoned new entry — discard its snapshot
     else if (v !== entry.text) pushHistory();
     if (v) entry.text = v;
@@ -551,7 +562,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
       // made (the first saves-and-stops); editing an existing entry chains only
       // when left unmodified — Enter after an edit just commits, but Enter on an
       // untouched entry adds a new one.
-      const modified = input.value.trim() !== entry.text;
+      const modified = undash(input.value.trim()) !== entry.text;
       // The new-list flow (chainable) always keeps going on Enter; only tapping
       // outside — a blur with no Enter — ends it. Otherwise fall back to the
       // per-platform rule.
