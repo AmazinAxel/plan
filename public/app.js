@@ -598,7 +598,8 @@ function newEntryBelow(chainable = false) {
   const list = plan.lists[state.selection.listIndex];
   if (!list) return;
   pushHistory();
-  const at = state.selection.entryIndex >= 0 ? state.selection.entryIndex + 1 : list.entries.length;
+  // List itself selected (entryIndex -1): insert at the top, not the bottom.
+  const at = state.selection.entryIndex >= 0 ? state.selection.entryIndex + 1 : 0;
   const entry = { id: uuid(), text: "" };
   list.entries.splice(at, 0, entry);
   state.selection.entryIndex = at;
