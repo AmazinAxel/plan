@@ -326,6 +326,16 @@ body[data-mode="insert"] .entry[data-selected][data-todo] {
   border-top-color: var(--blue2);
 }
 
+/* The last entry butts against the list's own gray border. A todo there would
+   show a gray sliver below the blue, so it draws its own matching bottom edge. */
+.entry[data-todo]:last-child {
+  border-bottom: 0.2rem solid var(--blue3);
+}
+
+body[data-mode="insert"] .entry[data-selected][data-todo]:last-child {
+  border-bottom-color: var(--blue2);
+}
+
 /* todo overrides the selection background so it stays blue while hovered/selected */
 .entry[data-todo][data-selected] {
   background: var(--blue3);
