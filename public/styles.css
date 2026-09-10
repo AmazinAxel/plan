@@ -265,10 +265,6 @@ body.dragging-scroll .entries {
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
-  /* WebKit floors this scroll container's fractional height, leaving a sliver of
-     the list's own background above the bottom border. Firefox rounds the other
-     way and shows nothing. Nudging the box down by that fraction hides it. */
-  margin-bottom: -0.5px;
 }
 
 .entry {
