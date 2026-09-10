@@ -199,6 +199,9 @@ body.touch #m-view {
   align-items: flex-start;
   gap: 12px;
   padding: 16px;
+  /* Keeps the first/last list off the viewport edge for any scroll that lands
+     on it — native wheel/trackpad as well as keyboard selection. */
+  scroll-padding-inline: 16px;
   outline: none;
 }
 

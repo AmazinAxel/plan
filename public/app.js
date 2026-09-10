@@ -775,21 +775,38 @@ function shiftMove(dx, dy) {
   save(); render(); scrollSelectionIntoView();
 }
 
+// Gap kept between a list and the board edge when scrolling it into view, so a
+// keyboard-selected list at either end never sits flush against the viewport.
+const EDGE_PAD = 16;
+
 function scrollSelectionIntoView() {
+  // Both axes are scrolled by assigning scrollLeft/scrollTop directly rather
+  // than with scrollIntoView: that method walks every ancestor scroller, so
+  // centering an entry vertically also nudged #board horizontally, which read
+  // as the whole view jittering left/right on an up/down keypress.
   const sec = board.querySelectorAll(".list")[state.selection.listIndex];
-  if (sec) sec.scrollIntoView({ behavior: "instant", inline: "nearest", block: "nearest" });
+  if (sec) {
+    const bRect = board.getBoundingClientRect();
+    const sRect = sec.getBoundingClientRect();
+    const left = board.scrollLeft + (sRect.left - bRect.left);
+    const max = board.scrollWidth - board.clientWidth;
+    let target = board.scrollLeft;
+    // Only scroll when the list actually pokes past an edge (inline: "nearest"
+    // semantics), otherwise a vertical move would drag the board sideways.
+    if (sRect.left - bRect.left < EDGE_PAD) target = left - EDGE_PAD;
+    else if (sRect.right - bRect.left > board.clientWidth - EDGE_PAD)
+      target = left - board.clientWidth + sec.offsetWidth + EDGE_PAD;
+    board.scrollLeft = Math.max(0, Math.min(max, target));
+  }
   const sel = board.querySelector(".entry[data-selected]");
   if (sel) {
     const scroller = sel.closest(".entries");
-    if (scroller) {
-      const sRect = scroller.getBoundingClientRect();
-      const eRect = sel.getBoundingClientRect();
-      const target = scroller.scrollTop + (eRect.top - sRect.top) - (scroller.clientHeight / 2) + (eRect.height / 2);
-      const max = scroller.scrollHeight - scroller.clientHeight;
-      scroller.scrollTop = Math.max(0, Math.min(max, target));
-    } else {
-      sel.scrollIntoView({ behavior: "instant", block: "center" });
-    }
+    if (!scroller) return;
+    const sRect = scroller.getBoundingClientRect();
+    const eRect = sel.getBoundingClientRect();
+    const target = scroller.scrollTop + (eRect.top - sRect.top) - (scroller.clientHeight / 2) + (eRect.height / 2);
+    const max = scroller.scrollHeight - scroller.clientHeight;
+    scroller.scrollTop = Math.max(0, Math.min(max, target));
   }
 }
 
