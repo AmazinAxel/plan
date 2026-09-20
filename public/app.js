@@ -921,11 +921,32 @@ function openPalette() {
     cleanup(); dlg.close(); setMode("normal"); openNewPlan(seed);
   };
 
+  // Shift+Up/Down reorders the highlighted plan. Only with an empty query, so
+  // "the row above" is unambiguously the plan above it in state.data.plans.
+  // "Plan" is fixed and nothing swaps across it; "<New plan>" sits one past the
+  // end of plans, so an out-of-range neighbour refuses the move on its own.
+  const reorder = (dir) => {
+    if (input.value) return false;
+    const plans = state.data.plans;
+    const i = highlighted, j = highlighted + dir;
+    if (!plans[i] || !plans[j]) return false;
+    if (plans[i].name === "Plan" || plans[j].name === "Plan") return false;
+    pushHistory();
+    [plans[i], plans[j]] = [plans[j], plans[i]];
+    highlighted = j;
+    save();
+    refresh();
+    return true;
+  };
+
   const onKey = (e) => {
     const matches = matching();
     const total = matches.length + 1;
-    if (e.key === "ArrowDown") { e.preventDefault(); highlighted = Math.min(total - 1, highlighted + 1); refresh(); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); highlighted = Math.max(0, highlighted - 1); refresh(); }
+    const down = e.key === "ArrowDown" || e.key === "J";
+    const up = e.key === "ArrowUp" || e.key === "K";
+    if (e.shiftKey && (down || up)) { e.preventDefault(); reorder(down ? 1 : -1); }
+    else if (down) { e.preventDefault(); highlighted = Math.min(total - 1, highlighted + 1); refresh(); }
+    else if (up) { e.preventDefault(); highlighted = Math.max(0, highlighted - 1); refresh(); }
     else if (e.key === "Enter") {
       e.preventDefault();
       if (highlighted === matches.length) { createNew(); return; }
