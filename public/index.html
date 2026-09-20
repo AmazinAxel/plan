@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>Plan</title>
   <link rel="icon" type="image/png" href="/planning.png"/>
+  <!-- Dialogs are display:none until opened, so their text never marks these
+       fonts as used — the first modal open would otherwise kick off the
+       download and swap mid-paint, shifting the rows. Preload the latin
+       subsets so they are cached before anything can open. -->
+  <link rel="preload" href="/fonts/sora-latin.woff2" as="font" type="font/woff2" crossorigin/>
+  <link rel="preload" href="/fonts/hammersmith-one-latin.woff2" as="font" type="font/woff2" crossorigin/>
   <link rel="stylesheet" href="/styles.css"/>
 </head>
 <body data-mode="normal" data-view="multi">
