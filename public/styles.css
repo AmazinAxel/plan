@@ -348,6 +348,10 @@ body[data-mode="insert"] .entry[data-selected][data-todo] {
   resize: none;
   overflow: hidden;
   font: inherit;
+  /* Wrap exactly like the committed <li> (.entry) does, so the line the caret
+     sits on while typing is the same line it lands on after the commit. */
+  word-break: break-word;
+  white-space: pre-wrap;
   border: none;
   padding: 0;
   background: transparent;
