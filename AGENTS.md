@@ -98,7 +98,7 @@ Four concerns, in this order in the file:
 | `e`      | Edit current list name (or selected entry, if one is selected)   |
 | `r`      | Delete current plan (confirm dialog; `Plan` is protected)        |
 | `b`      | Set / clear background image URL for current plan                |
-| `Space`  | Plan palette — fuzzy match, Enter switches plan. Always shows a `<New plan>` row at the bottom which opens the new-plan confirm dialog. |
+| `Space`  | Plan palette — fuzzy match, Enter switches plan. Up/Down wraps. While a query is typed, a `<New plan>` row sits at the bottom which opens the new-plan confirm dialog. |
 | `v`      | Toggle multi-list / single-list view (desktop only)              |
 | `o`      | Open the selected entry's image in the full-screen preview       |
 | Ctrl+V   | Attach a clipboard image to the selected entry (replaces any existing one). Also works while editing — that's how mobile attaches, via the long-press paste menu. |

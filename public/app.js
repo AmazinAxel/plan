@@ -886,11 +886,14 @@ function openPalette() {
   setMode("palette");
 
   const matching = () => state.data.plans.filter((p) => !input.value || fuzzyMatch(input.value, p.name));
-  // "<New plan>" is appended after all matches, at index matches.length.
+  // "<New plan>" is appended after all matches, at index matches.length, but
+  // only while a query is typed.
+  const showNew = () => !!input.value;
+  const count = () => matching().length + (showNew() ? 1 : 0);
   const refresh = () => {
     const matches = matching();
-    const total = matches.length + 1;
-    if (highlighted >= total) highlighted = total - 1;
+    const total = count();
+    if (highlighted >= total) highlighted = Math.max(0, total - 1);
     list.innerHTML = "";
     matches.forEach((p, i) => {
       const li = document.createElement("li");
@@ -901,6 +904,7 @@ function openPalette() {
       fastTap(li, () => pick(p.id));
       list.appendChild(li);
     });
+    if (!showNew()) return;
     const newLi = document.createElement("li");
     newLi.textContent = "<New plan>";
     newLi.dataset.newPlan = "";
@@ -941,15 +945,18 @@ function openPalette() {
 
   const onKey = (e) => {
     const matches = matching();
-    const total = matches.length + 1;
+    const total = count();
     const down = e.key === "ArrowDown" || e.key === "J";
     const up = e.key === "ArrowUp" || e.key === "K";
     if (e.shiftKey && (down || up)) { e.preventDefault(); reorder(down ? 1 : -1); }
-    else if (down) { e.preventDefault(); highlighted = Math.min(total - 1, highlighted + 1); refresh(); }
-    else if (up) { e.preventDefault(); highlighted = Math.max(0, highlighted - 1); refresh(); }
+    else if ((down || up) && total) {
+      e.preventDefault();
+      highlighted = (highlighted + (down ? 1 : -1) + total) % total;
+      refresh();
+    }
     else if (e.key === "Enter") {
       e.preventDefault();
-      if (highlighted === matches.length) { createNew(); return; }
+      if (showNew() && highlighted === matches.length) { createNew(); return; }
       if (matches[highlighted]) pick(matches[highlighted].id);
     }
   };
