@@ -882,7 +882,9 @@ function openPalette() {
   const input = $("palette-input");
   const list = $("palette-list");
   input.value = "";
-  let highlighted = 0;
+  // On the default "Plan", start on the second row; elsewhere start on "Plan".
+  const defaultIndex = state.data.plans.findIndex((p) => p.name === "Plan");
+  let highlighted = activePlan().name === "Plan" ? 1 : Math.max(0, defaultIndex);
   setMode("palette");
 
   const matching = () => state.data.plans.filter((p) => !input.value || fuzzyMatch(input.value, p.name));
