@@ -20,4 +20,6 @@ bunx wrangler secret put TURNSTILE_SECRET
 bun run deploy
 ```
 
+The SHA-256 hash above is only a bootstrap: the first successful login replaces it in KV with a salted PBKDF2 hash.
+
 (app created with the help of Claude Code)

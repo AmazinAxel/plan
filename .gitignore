@@ -198,3 +198,7 @@ dist
 
 ### Remix ###
 /build/
+
+# Local Claude Code settings
+.claude/settings.local.json
+.dev.vars*

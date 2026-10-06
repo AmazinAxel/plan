@@ -85,7 +85,7 @@ body {
   height: 100%;
 }
 
-/* Laid out but unpainted until app.js has rendered and fonts/images are in
+/* Laid out but unpainted until app.js has rendered and fonts/unsized images are in
    (see reveal()), so nothing on screen shifts after the first frame. The body's
    background still paints, so there is no white flash either. */
 body:not(.ready) > * {
@@ -170,12 +170,6 @@ dialog form {
   display: none;
 }
 
-body.touch #m-view {
-  position: absolute;
-  right: 16px;
-  color: var(--lightest1);
-}
-
 @media (max-width: 400px) {
   #topbar {
     justify-content: flex-start;
@@ -189,6 +183,9 @@ body.touch #m-palette {
 }
 
 body.touch #m-view {
+  position: absolute;
+  right: 16px;
+  color: var(--lightest1);
   display: inline-block;
   border: 0.2rem solid var(--border);
   padding: 4px 10px;
@@ -380,6 +377,14 @@ body[data-mode="insert"] .entry[data-selected][data-todo] {
   max-height: 40vh;
   object-fit: contain;
   -webkit-user-drag: none;
+}
+
+/* Recorded size known (--w/--h, natural pixels): the same fit as above, worked
+   out before the bytes arrive, so a late image never moves anything. */
+.entry img.sized {
+  width: min(100%, calc(var(--w) * 1px), calc(40vh * var(--w) / var(--h)));
+  height: auto;
+  aspect-ratio: var(--w) / var(--h);
 }
 
 /* full-screen image preview */
@@ -666,12 +671,6 @@ body.touch #palette-input {
 #palette-list li[data-default]::after {
   content: " ★";
   color: var(--muted);
-}
-
-.hint {
-  color: var(--muted);
-  font-size: 12px;
-  margin: 8px 0 0;
 }
 
 #auth-input {

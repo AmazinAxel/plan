@@ -53,6 +53,13 @@ async function flushSave() {
     },
     body: JSON.stringify(cleaned)
   });
+  if (res.status === 401) {
+    // Session gone (secret rotated, cookie expired): keep the write pending and
+    // retry it once signed back in.
+    savePending = true;
+    showAuth(saveNow);
+    return;
+  }
   if (res.status === 409) {
     const remote = await res.json();
     // Another device wrote first; adopt its state instead of clobbering — but
@@ -106,7 +113,7 @@ function popHistory() { history.pop(); }
 function scrubHistory() {
   const live = liveImageIds();
   for (const snap of history) {
-    eachEntry(snap.data, (e) => { if (e.image && !live.has(e.image)) delete e.image; });
+    eachEntry(snap.data, (e) => { if (e.image && !live.has(e.image)) { delete e.image; delete e.imageSize; } });
   }
   for (const id of imgCache.keys()) if (!live.has(id)) imgCache.delete(id);
   for (const id of objectUrls.keys()) {
@@ -183,7 +190,7 @@ function render() {
       it.textContent = e.text;
       // Appended after the text, so `it.firstChild` stays the text node that
       // caretOffsetFromPoint measures against.
-      if (e.image) it.appendChild(imgFor(e.image));
+      if (e.image) it.appendChild(imgFor(e.image, e.imageSize));
       if (isSep(e.text)) it.dataset.sep = "";
       if (e.todo) it.dataset.todo = "";
       if (li === state.selection.listIndex && ei === state.selection.entryIndex) it.dataset.selected = "";
@@ -683,7 +690,6 @@ function toggleView() {
     if (idx >= 0) { state.selection.listIndex = idx; state.selection.entryIndex = -1; }
   }
   body.dataset.view = body.dataset.view === "single" ? "multi" : "single";
-  attachSortables();
   render();
 }
 
@@ -1111,17 +1117,48 @@ function selectedEntryIds() {
   return entry ? { listId: list.id, entryId: entry.id } : null;
 }
 
-function imgFor(id) {
+// `size` is the entry's recorded [width, height]. With it, the element's box is
+// sized up front (see .entry img.sized), so the picture can arrive whenever it
+// likes without shifting the board — which is also why reveal() only waits on
+// unsized images.
+function imgFor(id, size) {
   let el = imgCache.get(id);
   if (!el) {
     el = document.createElement("img");
     el.alt = "";
+    el.decoding = "async";
     el.draggable = false; // a native image drag would hijack Sortable's entry drag
     el.src = imgSrc(id);
     el.addEventListener("error", () => healBrokenImage(id));
+    el.addEventListener("load", () => recordImageSize(id, el));
     imgCache.set(id, el);
   }
+  if (size && !el.classList.contains("sized")) {
+    el.style.setProperty("--w", size[0]);
+    el.style.setProperty("--h", size[1]);
+    el.classList.add("sized");
+  }
   return el;
+}
+
+// Backfill for images stored before sizes were recorded: one save, after which
+// every later load reserves the box up front.
+function recordImageSize(id, el) {
+  if (!el.naturalWidth || !el.naturalHeight) return;
+  let changed = false;
+  eachEntry(state.data, (e) => {
+    if (e.image === id && !e.imageSize) { e.imageSize = [el.naturalWidth, el.naturalHeight]; changed = true; }
+  });
+  if (changed) save();
+}
+
+async function imageSize(blob) {
+  try {
+    const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" });
+    const size = [bmp.width, bmp.height];
+    bmp.close();
+    return size;
+  } catch { return null; }
 }
 
 // A reference whose bytes are gone renders as a broken image forever, so drop
@@ -1141,7 +1178,7 @@ async function healBrokenImage(id) {
   } catch { healing.delete(id); return; }
   imgCache.delete(id);
   let changed = false;
-  eachEntry(state.data, (e) => { if (e.image === id) { delete e.image; changed = true; } });
+  eachEntry(state.data, (e) => { if (e.image === id) { delete e.image; delete e.imageSize; changed = true; } });
   if (changed) { save(); render(); }
 }
 
@@ -1173,6 +1210,7 @@ async function encodeImage(file) {
 async function attachImage(file, listId, entryId) {
   const blob = await encodeImage(file);
   if (!blob) return;
+  const size = await imageSize(blob);
   uploads++;
   let id = null;
   try {
@@ -1182,6 +1220,8 @@ async function attachImage(file, listId, entryId) {
       body: blob
     });
     if (res.ok) id = (await res.json()).id;
+    // Nothing was stored; sign back in, then the paste can simply be repeated.
+    else if (res.status === 401) showAuth(() => {});
   } catch { /* offline — nothing was stored */ }
   finally { uploads--; }
   if (!id) return;
@@ -1196,11 +1236,12 @@ async function attachImage(file, listId, entryId) {
   objectUrls.set(id, URL.createObjectURL(blob)); // render from the bytes we already hold
   pushHistory();
   found.entry.image = id;
+  if (size) found.entry.imageSize = size; else delete found.entry.imageSize;
   saveNow(); // get the reference to the server promptly — until it lands, the object is an orphan
   if (body.dataset.mode === "insert") {
     // Mid-edit: render() would tear out the live textarea, so patch the node.
     const li = board.querySelector(`.entry[data-entry-id="${entryId}"]`);
-    if (li) { li.querySelector("img")?.remove(); li.appendChild(imgFor(id)); }
+    if (li) { li.querySelector("img")?.remove(); li.appendChild(imgFor(id, size)); }
   } else render();
 }
 
@@ -1212,6 +1253,7 @@ function detachImage(listId, entryId) {
   const found = findEntry(listId, entryId);
   if (!found?.entry.image) return;
   delete found.entry.image;
+  delete found.entry.imageSize;
   // An entry that was only ever an image has nothing left to show. render()
   // re-clamps the selection afterwards.
   if (!found.entry.text) found.list.entries.splice(found.list.entries.indexOf(found.entry), 1);
@@ -1310,8 +1352,8 @@ document.addEventListener("pointerdown", () => {
 // Clear the selection when the empty board area is activated. In single view the
 // active list must stay visible — nulling listIndex would leave no list with
 // [data-active], and the CSS hides every list but the active one, blanking the
-// whole board. So single view only drops the entry selection; multi view (only
-// reachable on desktop) fully deselects.
+// whole board. So single view only drops the entry selection; multi view fully
+// deselects.
 function deselectOutside() {
   if (body.dataset.view === "single") {
     if (state.selection.entryIndex === -1) return;
@@ -1660,14 +1702,22 @@ function loadTurnstile() {
   document.head.appendChild(s);
 }
 
-function showAuth() {
+// `onAuthed` runs after a successful login. At boot that loads the data; when
+// the session dies mid-use (a 401 from a save, refresh or upload) it resumes
+// whatever was cut off instead, so unsaved edits survive the re-login.
+let authOpen = false;
+function showAuth(onAuthed = loadData) {
+  if (authOpen) return;
+  authOpen = true;
   const dlg = $("auth");
   const form = $("auth-form");
   const input = $("auth-input");
   const err = $("auth-error");
   loadTurnstile();
   dlg.showModal();
-  form.addEventListener("submit", async (e) => {
+  // Esc would close the dialog and strand a signed-out board behind it.
+  dlg.addEventListener("cancel", (e) => e.preventDefault());
+  form.addEventListener("submit", async function onSubmit(e) {
     e.preventDefault();
     err.hidden = true;
 
@@ -1677,14 +1727,20 @@ function showAuth() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password: input.value, turnstile: token })
     });
-    if (res.ok) { dlg.close(); await loadData(); }
+    if (res.ok) {
+      form.removeEventListener("submit", onSubmit);
+      authOpen = false;
+      input.value = "";
+      dlg.close();
+      await onAuthed();
+    }
     // Any failure consumes the token, so reset the widget for a fresh one.
     else { err.hidden = false; input.select(); window.turnstile?.reset(); }
   });
 }
 
 // The page arrives hidden (body:not(.ready) in styles.css) and is revealed only
-// once the first render is complete — fonts in, the active plan's images decoded
+// once the first render is complete — fonts in, any image without a reserved box decoded
 // — so the first painted frame is the settled one. Capped, so a slow font or
 // image costs a late shift rather than a blank screen.
 async function reveal() {
@@ -1693,7 +1749,7 @@ async function reveal() {
     Promise.all([
       document.fonts.load("1em Sora"),
       document.fonts.load("1em 'Hammersmith One'"),
-      ...[...board.querySelectorAll("img")].map((img) => img.decode()),
+      ...[...board.querySelectorAll("img:not(.sized)")].map((img) => img.decode()),
     ]).catch(() => {}),
     new Promise((r) => setTimeout(r, 1500)),
   ]);
@@ -1735,6 +1791,7 @@ async function refresh() {
   if (savePending || uploads > 0 || body.dataset.mode === "insert") return;
   let res;
   try { res = await fetch("/api/data", { cache: "no-store" }); } catch { return; }
+  if (res.status === 401) { showAuth(refresh); return; }
   if (!res.ok) return;
   const remote = await res.json();
   // Strictly newer only. KV reads are eventually consistent, so a refresh right
@@ -1750,7 +1807,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // An in-flight upload is guarded too: leaving before its reference is saved
-// would strand the object in R2 until the server's next sweep.
+// would leave the image unreferenced until the server's next sweep.
 window.addEventListener("beforeunload", (e) => {
   if (savePending || uploads > 0) { e.preventDefault(); e.returnValue = ""; }
 });

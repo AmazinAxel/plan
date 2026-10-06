@@ -1,6 +1,8 @@
-// `image` is an R2 object id (see src/images.ts), never image bytes — the whole
-// blob is re-uploaded on every save.
-export interface Entry { id: string; text: string; todo?: boolean; image?: string }
+// `image` is an image id (the bytes live at `img:<id>`, see src/images.ts), never
+// image bytes — the whole blob is re-uploaded on every save. `imageSize` is its
+// natural [width, height], so the client can reserve the box before the bytes
+// arrive.
+export interface Entry { id: string; text: string; todo?: boolean; image?: string; imageSize?: [number, number] }
 export interface List  { id: string; name: string; entries: Entry[] }
 export interface Plan  { id: string; name: string; lists: List[]; background?: string }
 export interface Data  { activePlanId: string; plans: Plan[]; version: number }

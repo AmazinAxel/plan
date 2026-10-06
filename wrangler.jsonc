@@ -6,8 +6,9 @@
 	"assets": {
 		"directory": "./public",
 		"binding": "ASSETS",
-		// "/" is assembled by the worker (see servePage), not served as-is.
-		"run_worker_first": ["/"]
+		// "/" is assembled by the worker (see servePage); the other two get immutable
+		// caching there when requested with a content version.
+		"run_worker_first": ["/", "/styles.css", "/app.js"]
 	},
 	"observability": {
 		"enabled": true

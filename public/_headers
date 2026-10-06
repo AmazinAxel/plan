@@ -1,7 +1,15 @@
-# Vendored and never edited in place, so repeat loads skip revalidation.
+# Static assets served without the worker. Worker responses get these (and
+# more) from harden() in worker.ts.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
+# Vendored and never edited in place (a replacement gets a new filename), so
+# repeat loads skip revalidation.
 /fonts/*
   Cache-Control: public, max-age=31536000, immutable
 /Sortable.min.js
   Cache-Control: public, max-age=31536000, immutable
+
 /planning.png
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800
