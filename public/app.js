@@ -286,7 +286,8 @@ function stopAutoScroll() {
 function attachSortables() {
   destroySortables();
   const plan = activePlan();
-  if (!plan) return;
+  // Sortable loads async (see index.html); its load handler calls back in here.
+  if (!plan || !window.Sortable) return;
 
   // Set when a drag begins in single view: siblings are revealed for the
   // duration of the drag, then hidden again on drop. Shared by both the list
@@ -1753,6 +1754,8 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("beforeunload", (e) => {
   if (savePending || uploads > 0) { e.preventDefault(); e.returnValue = ""; }
 });
+
+if (!window.Sortable) $("sortable-js").addEventListener("load", attachSortables);
 
 // The worker inlines the data blob (or null when unauthed) into the page, so
 // boot needs no round-trip at all.

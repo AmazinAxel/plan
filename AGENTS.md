@@ -4,7 +4,7 @@ Read this first. The README has setup; this file has the design.
 
 ## Stack
 
-Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` (data blob *and* entry images) + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and pulls SortableJS from a jsdelivr CDN.
+Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` (data blob *and* entry images) + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and loads the vendored `public/Sortable.min.js` `async` (drag attaches once it arrives, so it never delays first paint).
 
 When changing bindings: `npx wrangler types` (then re-run typecheck).
 
@@ -55,7 +55,7 @@ KV free tier is the operating budget: 1 GB stored, 1k writes/day, 100k reads/day
 - `auth:hash` in KV = sha256 hex of the password.
 - `auth:secret` in KV = 32-byte hex HMAC key.
 - Cookie: `session=<HMAC-SHA256("v1", secret)>`, HttpOnly, Secure, SameSite=Strict, Max-Age=31536000000 (~1000y).
-- Cookie carries no per-user state. Rotating `auth:secret` invalidates all sessions. No KV reads per API call beyond fetching the secret.
+- Cookie carries no per-user state. Rotating `auth:secret` invalidates all sessions — within an hour, since the secret read is edge-cached (`cacheTtl: 3600`). No KV reads per API call beyond fetching the secret.
 - Constant-time compare for both password hash and cookie token.
 - **Turnstile** gates `/api/auth`: the client sends the widget token alongside the password; the worker verifies it via `challenges.cloudflare.com/turnstile/v0/siteverify` (secret in `TURNSTILE_SECRET` — a Worker secret, set with `wrangler secret put TURNSTILE_SECRET`) before looking at the password. Site key (public) lives in `index.html`'s `.cf-turnstile[data-sitekey]`. The frontend resets the widget on any failure since tokens are single-use.
 - **Rate limit**: `/api/auth` allows `RL_MAX` (3) attempts per IP per hour (fixed window in KV at `rl:auth:<ip>` = `{count, resetAt}`, keyed on `CF-Connecting-IP`). Order is Turnstile → rate-limit increment → password, so only valid-token submissions spend an attempt. Exceeding returns `429` with `Retry-After`.

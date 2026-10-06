@@ -80,7 +80,9 @@
     </div>
   </dialog>
 
-  <script src="/Sortable.min.js" defer></script>
+  <!-- async: drag is never needed for the first paint, so this must not hold
+       up app.js (as defer would). app.js attaches drag once it loads. -->
+  <script src="/Sortable.min.js" id="sortable-js" async></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

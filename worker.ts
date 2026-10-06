@@ -53,8 +53,11 @@ const json = (body: unknown, init: ResponseInit = {}) =>
     headers: { "Content-Type": "application/json", ...(init.headers || {}) },
   });
 
+// Edge-cached for an hour: it is read on every API call and page load. Rotating
+// it therefore takes up to an hour to invalidate sessions in a colo that has it
+// cached.
 async function getSecret(env: Env): Promise<string | null> {
-  return env.PLAN_KV.get("auth:secret");
+  return env.PLAN_KV.get("auth:secret", { cacheTtl: 3600 });
 }
 
 async function getHash(env: Env): Promise<string | null> {
@@ -196,7 +199,16 @@ async function servePage(req: Request, env: Env, ctx: ExecutionContext): Promise
     })
     .transform(new Response(html));
   return new Response(res.body, {
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      // Cloudflare replays these as a 103 Early Hints (when enabled on the zone),
+      // so the fonts start downloading while the worker is still reading KV.
+      Link: [
+        "</fonts/sora-latin.woff2>; rel=preload; as=font; type=font/woff2; crossorigin",
+        "</fonts/hammersmith-one-latin.woff2>; rel=preload; as=font; type=font/woff2; crossorigin"
+      ].join(", "),
+    },
   });
 }
 
