@@ -72,7 +72,7 @@ KV free tier is the operating budget: 1 GB stored, 1k writes/day, 100k reads/day
 | GET/HEAD | `/api/img/<id>` | Fetch one image, immutably cached (HEAD = existence probe) |
 | DELETE | `/api/img/<id>` | Drop one object; **409 if the live blob references it** |
 
-Everything else falls through to `env.ASSETS.fetch(req)`.
+`GET /` is assembled by the worker (`servePage`, routed there by `run_worker_first`): `styles.css` and `app.js` are inlined, the data blob is inlined as `<script id="boot" type="application/json">` (`null` when unauthed), and the active plan's images + background are preloaded — first paint costs one round-trip. The response is `no-store` (it carries private data). The client keeps `body` children `visibility: hidden` until `reveal()` (first render done, fonts loaded, visible images decoded, capped at 1.5s), so the first painted frame is the final layout — zero CLS. Everything else falls through to `env.ASSETS.fetch(req)`. `public/_headers` marks fonts and `Sortable.min.js` `immutable` for a year: **rename the file** when replacing one, or browsers keep the old copy.
 
 ## Client architecture (`public/app.js`)
 
@@ -129,7 +129,7 @@ Four concerns, in this order in the file:
 
 ## Styling — `public/styles.css`
 
-Nord palette is exposed as CSS custom properties (`--darkest1`..`--darkest4`, `--lightest1`..`--lightest3`, `--red`/`--orange`/`--yellow`/`--green`/`--purple`, `--blue1`/`--blue2`/`--blue3`) plus semantic aliases (`--bg`, `--fg`, `--surface`, `--border`, `--accent`, `--danger`) and fonts (`--headerFont`, `--primaryFont`, `--ease`). Fonts (Hammersmith One + Sora) are self-hosted as `@font-face` rules pointing at `public/fonts/*.woff2` — served first-party by the Worker's ASSETS binding, no Google Fonts dependency. Sora is a variable font, so one file covers weights 300–600. To update a font, re-pull the woff2 from Google's CSS (with a modern browser UA) and replace the file. The file ships with only the bare layout required: board scroll, dialogs, single-view centering, dot indicators. Extend here.
+Nord palette is exposed as CSS custom properties (`--darkest1`..`--darkest4`, `--lightest1`..`--lightest3`, `--red`/`--orange`/`--yellow`/`--green`/`--purple`, `--blue1`/`--blue2`/`--blue3`) plus semantic aliases (`--bg`, `--fg`, `--surface`, `--border`, `--accent`, `--danger`) and fonts (`--headerFont`, `--primaryFont`, `--ease`). Fonts (Hammersmith One + Sora) are self-hosted as `@font-face` rules pointing at `public/fonts/*.woff2` — served first-party by the Worker's ASSETS binding, no Google Fonts dependency. Sora is a variable font, so one file covers weights 300–600. To update a font, re-pull the woff2 from Google's CSS (with a modern browser UA) and save it under a new filename (it is cached `immutable`), updating the `@font-face` and preload URLs. The file ships with only the bare layout required: board scroll, dialogs, single-view centering, dot indicators. Extend here.
 
 The "no buttons on desktop" rule lives in CSS:
 

@@ -159,10 +159,53 @@ async function requireAuth(req: Request, env: Env): Promise<boolean> {
   return verifyRequest(req, secret);
 }
 
+const escapeAttr = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+// The page is assembled here rather than served as a static asset so the first
+// paint costs one round-trip: the stylesheet, app.js and (when authed) the data
+// blob are inlined, and the active plan's images are preloaded while the rest of
+// the HTML parses. The client keeps the board hidden until it has rendered from
+// that data, so the first painted frame is the final one.
+async function servePage(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  // Plain requests: a forwarded If-None-Match could hand back a bodiless 304.
+  const asset = (p: string) => env.ASSETS.fetch(new Request(new URL(p, req.url))).then((r) => r.text());
+  const [html, css, js, data] = await Promise.all([
+    asset("/"), asset("/styles.css"), asset("/app.js"),
+    requireAuth(req, env).then((ok) => (ok ? getData(env.PLAN_KV) : null)),
+  ]);
+  if (data) ctx.waitUntil(sweep(env.PLAN_KV, data));
+
+  const plan = data && (data.plans.find((p) => p.id === data.activePlanId) || data.plans[0]);
+  const preloads: string[] = [];
+  if (plan?.background) preloads.push(`<link rel="preload" as="image" href="${escapeAttr(plan.background)}"/>`);
+  for (const id of plan ? imageRefs({ ...data!, plans: [plan] }) : []) {
+    if (!isImageId(id)) continue;
+    preloads.push(`<link rel="preload" as="image" href="/api/img/${id}"/>`);
+  }
+  // `<` escaped so nothing in an entry's text can close the script element.
+  const boot = JSON.stringify(data).replace(/</g, "\\u003c");
+
+  const res = new HTMLRewriter()
+    .on("head", { element: (el) => { el.append(preloads.join(""), { html: true }); } })
+    .on('link[rel="stylesheet"]', { element: (el) => { el.replace(`<style>${css}</style>`, { html: true }); } })
+    .on('script[type="module"]', {
+      element: (el) => {
+        el.replace(`<script id="boot" type="application/json">${boot}</script><script type="module">${js}</script>`, { html: true });
+      },
+    })
+    .transform(new Response(html));
+  return new Response(res.body, {
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
+
+    if (path === "/" && (req.method === "GET" || req.method === "HEAD")) return servePage(req, env, ctx);
 
     if (path === "/api/auth") return handleAuth(req, env);
 

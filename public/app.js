@@ -1682,13 +1682,39 @@ function showAuth() {
   });
 }
 
+// The page arrives hidden (body:not(.ready) in styles.css) and is revealed only
+// once the first render is complete — fonts in, the active plan's images decoded
+// — so the first painted frame is the settled one. Capped, so a slow font or
+// image costs a late shift rather than a blank screen.
+async function reveal() {
+  if (body.classList.contains("ready")) return;
+  await Promise.race([
+    Promise.all([
+      document.fonts.load("1em Sora"),
+      document.fonts.load("1em 'Hammersmith One'"),
+      ...[...board.querySelectorAll("img")].map((img) => img.decode()),
+    ]).catch(() => {}),
+    new Promise((r) => setTimeout(r, 1500)),
+  ]);
+  body.classList.add("ready");
+}
+
 async function loadData() {
-  const res = await fetch("/api/data");
-  if (!res.ok) { showAuth(); return; }
-  state.data = await res.json();
+  // Inlined by the worker on the initial page load (null when unauthed); only a
+  // post-login load has to fetch.
+  const boot = $("boot");
+  let data = boot ? JSON.parse(boot.textContent) : undefined;
+  boot?.remove();
+  if (data === undefined) {
+    const res = await fetch("/api/data");
+    data = res.ok ? await res.json() : null;
+  }
+  if (!data) { await reveal(); showAuth(); return; }
+  state.data = data;
   if (state.isTouch || innerWidth < 600) body.dataset.view = "single";
   setupTouch();
   render();
+  await reveal();
   board.focus();
 }
 
@@ -1728,6 +1754,6 @@ window.addEventListener("beforeunload", (e) => {
   if (savePending || uploads > 0) { e.preventDefault(); e.returnValue = ""; }
 });
 
-// /api/data 401s when unauthed and loadData() falls back to showAuth(), so we
-// boot in a single round-trip with no separate auth probe.
+// The worker inlines the data blob (or null when unauthed) into the page, so
+// boot needs no round-trip at all.
 loadData();

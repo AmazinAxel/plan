@@ -85,6 +85,13 @@ body {
   height: 100%;
 }
 
+/* Laid out but unpainted until app.js has rendered and fonts/images are in
+   (see reveal()), so nothing on screen shifts after the first frame. The body's
+   background still paints, so there is no white flash either. */
+body:not(.ready) > * {
+  visibility: hidden;
+}
+
 body {
   background: var(--bg);
   color: var(--fg);
