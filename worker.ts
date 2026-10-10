@@ -15,10 +15,6 @@ interface Env {
 const RL_MAX = 3;
 const RL_WINDOW_MS = 60 * 60 * 1000;
 
-function clientIp(req: Request): string {
-  return req.headers.get("CF-Connecting-IP") || "unknown";
-}
-
 async function rateLimit(env: Env, ip: string): Promise<{ ok: boolean; retryAfter: number }> {
   const key = `rl:auth:${ip}`;
   const now = Date.now();
@@ -32,21 +28,16 @@ async function rateLimit(env: Env, ip: string): Promise<{ ok: boolean; retryAfte
   return { ok: true, retryAfter: 0 };
 }
 
-async function verifyTurnstile(token: string, secret: string, ip: string): Promise<boolean> {
+async function verifyTurnstile(token: string, secret: string, ip: string | null): Promise<boolean> {
   if (!token) return false;
   const form = new FormData();
   form.append("secret", secret);
   form.append("response", token);
-  if (ip && ip !== "unknown") form.append("remoteip", ip);
+  if (ip) form.append("remoteip", ip);
   // Unreachable or malformed counts as a failed challenge, not a 500.
   try {
-    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-      method: "POST",
-      body: form
-    });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { success?: boolean };
-    return data.success === true;
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
+    return res.ok && ((await res.json()) as { success?: boolean }).success === true;
   } catch { return false; }
 }
 
@@ -59,30 +50,23 @@ const json = (body: unknown, init: ResponseInit = {}) =>
 // Edge-cached for an hour: it is read on every API call and page load. Rotating
 // it therefore takes up to an hour to invalidate sessions in a colo that has it
 // cached.
-async function getSecret(env: Env): Promise<string | null> {
-  return env.PLAN_KV.get("auth:secret", { cacheTtl: 3600 });
-}
-
-async function getHash(env: Env): Promise<string | null> {
-  return env.PLAN_KV.get("auth:hash");
-}
+const getSecret = (env: Env) => env.PLAN_KV.get("auth:secret", { cacheTtl: 3600 });
 
 async function handleAuth(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return new Response(null, { status: 405 });
-  const [hash, secret] = await Promise.all([getHash(env), getSecret(env)]);
+  const [hash, secret] = await Promise.all([env.PLAN_KV.get("auth:hash"), getSecret(env)]);
   if (!hash || !secret || !env.TURNSTILE_SECRET) return json({ error: "server not initialized" }, { status: 503 });
   let body: { password?: unknown; turnstile?: unknown };
   try { body = await req.json(); } catch { return json({ error: "bad body" }, { status: 400 }); }
   if (typeof body.password !== "string") return json({ error: "bad body" }, { status: 400 });
 
-  const ip = clientIp(req);
-
+  const ip = req.headers.get("CF-Connecting-IP");
   const token = typeof body.turnstile === "string" ? body.turnstile : "";
   if (!(await verifyTurnstile(token, env.TURNSTILE_SECRET, ip))) {
     return json({ error: "challenge failed" }, { status: 403 });
   }
 
-  const rl = await rateLimit(env, ip);
+  const rl = await rateLimit(env, ip || "unknown");
   if (!rl.ok) {
     return json({ error: "too many attempts" }, { status: 429, headers: { "Retry-After": String(rl.retryAfter) } });
   }
@@ -90,11 +74,7 @@ async function handleAuth(req: Request, env: Env): Promise<Response> {
   const { ok, upgrade } = await checkPassword(body.password, hash);
   if (!ok) return json({ error: "invalid" }, { status: 401 });
   if (upgrade) await env.PLAN_KV.put("auth:hash", upgrade); // legacy SHA-256 → PBKDF2
-  const secure = new URL(req.url).protocol === "https:";
-  return new Response(null, {
-    status: 204,
-    headers: { "Set-Cookie": await buildSessionCookie(secret, secure) },
-  });
+  return new Response(null, { status: 204, headers: { "Set-Cookie": await buildSessionCookie(secret, req) } });
 }
 
 // POST /api/img                 -> store the body, return { id }
@@ -160,10 +140,8 @@ async function handleImage(req: Request, env: Env, id: string): Promise<Response
 }
 
 async function requireAuth(req: Request, env: Env): Promise<boolean> {
-  if (!hasSessionCookie(req)) return false;
-  const secret = await getSecret(env);
-  if (!secret) return false;
-  return verifyRequest(req, secret);
+  const secret = hasSessionCookie(req) && (await getSecret(env));
+  return !!secret && verifyRequest(req, secret);
 }
 
 // Scripts only from this origin (plus Turnstile, which also needs its iframe).
@@ -272,7 +250,7 @@ async function servePage(req: Request, env: Env, ctx: ExecutionContext): Promise
   });
   // Re-issued on every authed load, so the cookie's 400-day lifetime only runs
   // out on a device that hasn't opened the app in that long.
-  if (authed) headers.set("Set-Cookie", await buildSessionCookie(secret!, new URL(req.url).protocol === "https:"));
+  if (authed) headers.set("Set-Cookie", await buildSessionCookie(secret!, req));
   return new Response(res.body, { headers });
 }
 

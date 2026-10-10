@@ -1,37 +1,15 @@
 @font-face {
   font-family: 'Hammersmith One';
-  font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("/fonts/hammersmith-one-latin.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Hammersmith One';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/hammersmith-one-latin-ext.woff2") format("woff2");
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  src: url("/fonts/hammersmith-one-latin.woff2");
 }
 
 @font-face {
   font-family: 'Sora';
-  font-style: normal;
   font-weight: 300 600;
   font-display: swap;
-  src: url("/fonts/sora-latin.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Sora';
-  font-style: normal;
-  font-weight: 300 600;
-  font-display: swap;
-  src: url("/fonts/sora-latin-ext.woff2") format("woff2");
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  src: url("/fonts/sora-latin.woff2");
 }
 
 :root {
@@ -98,12 +76,13 @@ body {
   font-family: var(--primaryFont);
   font-size: 21px;
   overflow: hidden;
+  /* A plan's background image, when set (see render()). */
+  background-size: cover;
+  background-position: center;
 }
 
-input:focus,
-textarea:focus,
-.list-name input,
-.entry input {
+input,
+textarea {
   outline: none;
 }
 
@@ -177,7 +156,6 @@ dialog form {
 }
 
 body.touch #m-palette {
-  border: none;
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -191,7 +169,6 @@ body.touch #m-view {
   padding: 4px 10px;
   cursor: pointer;
   font-size: 12px;
-  font-family: var(--headerFont) !important;
 }
 
 /* board */
@@ -275,7 +252,7 @@ body.dragging-scroll .entries {
 }
 
 .entry {
-  padding: 10px 10px;
+  padding: 10px;
   word-break: break-word;
   white-space: pre-wrap;
   cursor: pointer;
@@ -285,11 +262,6 @@ body.dragging-scroll .entries {
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
-}
-
-.entry[data-todo] {
-  background: var(--blue3);
-  color: var(--lightest1);
 }
 
 .entry+.entry {
@@ -310,56 +282,47 @@ body.dragging-scroll .entries {
   border-top: none;
 }
 
+.entry[data-todo] {
+  background: var(--blue3);
+  border-top-color: var(--blue3);
+  color: var(--lightest1);
+}
+
+/* The divider at the top of a selected/todo entry matches that entry's own
+   background, otherwise the gray separator bleeds into the color. */
 .entry[data-selected] {
   background: var(--darkest3);
+  border-top-color: var(--darkest3);
   outline: 0.2rem solid var(--selection);
 }
 
-/* The divider that sits at the top of a selected/todo entry should match that
-   entry's own background, otherwise the gray separator bleeds into the color. */
-.entry[data-selected] {
-  border-top-color: var(--darkest3);
-}
-
-body[data-mode="insert"] .entry[data-selected] {
-  border-top-color: var(--darkest4);
-}
-
-.entry[data-todo] {
-  border-top-color: var(--blue3);
-}
-
-body[data-mode="insert"] .entry[data-selected][data-todo] {
-  border-top-color: var(--blue2);
-}
-/* todo overrides the selection background so it stays blue while hovered/selected */
+/* todo overrides the selection background so it stays blue while selected */
 .entry[data-todo][data-selected] {
   background: var(--blue3);
+  border-top-color: var(--blue3);
 }
 
 /* editing — lighten the background of the entry being edited */
 body[data-mode="insert"] .entry[data-selected] {
   background: var(--darkest4);
+  border-top-color: var(--darkest4);
 }
 
 body[data-mode="insert"] .entry[data-selected][data-todo] {
   background: var(--blue2);
+  border-top-color: var(--blue2);
 }
 
-.entry input,
 .entry textarea {
   width: 100%;
   resize: none;
   overflow: hidden;
-  font: inherit;
   /* Wrap exactly like the committed <li> (.entry) does, so the line the caret
      sits on while typing is the same line it lands on after the commit. */
   word-break: break-word;
   white-space: pre-wrap;
   border: none;
   padding: 0;
-  background: transparent;
-  color: inherit;
   /* Re-enable text selection/caret while actually editing (user-select is
      inherited, so the .entry rule above would otherwise disable it here too). */
   user-select: text;
@@ -447,6 +410,21 @@ body[data-view="single"] #board>.list {
 }
 
 body[data-view="single"] #board>.list[data-active] {
+  display: flex;
+}
+
+/* A drag started in single view reveals every list until the drop (see
+   attachSortables). The padding is the empty space flanking a centred list, so
+   every list — the first and last included — can scroll to the centre, and the
+   grabbed one stays put. Left-aligned and scrollable, since a centred flex row
+   that overflows can't be scrolled to its start. */
+body.dragging[data-view="single"] #board {
+  justify-content: flex-start;
+  overflow-x: auto;
+  padding-inline: calc(50% - min(175px, 50vw - 16px));
+}
+
+body.dragging[data-view="single"] #board>.list {
   display: flex;
 }
 
@@ -541,12 +519,9 @@ body.touch #board {
 /* nav bar hidden by default on mobile; toggled open via #nav-toggle.
    Fixed height so the toggle button can be centered against it. */
 body.touch #actions {
-  display: none;
-  flex-wrap: nowrap;
   justify-content: center;
   align-items: center;
   gap: 6px;
-  position: static;
   height: 56px;
   /* leave room on the right for the floating toggle button */
   padding: 0 62px 0 10px;
@@ -574,7 +549,6 @@ body.touch #nav-toggle {
   border: 0.2rem solid var(--border);
   border-radius: 50%;
   background: var(--surface);
-  color: var(--text);
 }
 
 body.touch.nav-open #nav-toggle {
@@ -646,11 +620,6 @@ body.touch #palette-input {
   max-height: 60vh;
 }
 
-#palette-input,
-#new-plan-input {
-  width: 100%;
-}
-
 #palette-list {
   list-style: none;
   padding: 0;
@@ -673,10 +642,6 @@ body.touch #palette-input {
   color: var(--muted);
 }
 
-#auth-input {
-  width: 100%;
-}
-
 .cf-turnstile {
   margin: 12px 0 0;
 }
@@ -692,10 +657,4 @@ body.touch #palette-input {
 
 .sortable-drag {
   background: var(--darkest3);
-}
-
-h1,
-h2,
-h3 {
-  font-family: var(--headerFont);
 }

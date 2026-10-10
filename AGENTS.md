@@ -4,7 +4,7 @@ Read this first. The README has setup; this file has the design.
 
 ## Stack
 
-Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` (data blob *and* entry images) + a static `ASSETS` binding pointing at `public/`. No bundler, no framework. The browser loads `public/index.html`, which imports `public/app.js` as a module and loads the vendored `public/Sortable.min.js` `async` (drag attaches once it arrives, so it never delays first paint).
+Cloudflare Workers (`worker.ts`) + a KV namespace bound as `PLAN_KV` (data blob *and* entry images) + a static `ASSETS` binding pointing at `dist/`. No framework. `build.ts` (run by wrangler before every deploy/dev via `build.command`) copies `public/` into `dist/`, minifying `app.js`/`styles.css` and stripping HTML comments, so sources stay heavily commented at no network cost. Edit `public/`, never `dist/` (gitignored). The browser loads `public/index.html`, which imports `public/app.js` as a module and loads the vendored `public/Sortable.min.js` `async` (drag attaches once it arrives, so it never delays first paint).
 
 When changing bindings, update the hand-written `Env` interface in `worker.ts`, then `bun run typecheck`. Tooling is bun (`bun.lock`); run wrangler as `bunx wrangler`.
 
@@ -83,9 +83,9 @@ Four concerns, in this order in the file:
 
 1. **State + persistence** — `state.data` mirrors the server. `save()` throttles to one PUT per `SAVE_INTERVAL` (5s); `saveNow()` flushes immediately, used for destructive actions (deletes, undo, images, background).
 2. **Render** — one `render()` rebuilds `<main>` from scratch each call. The data set is tiny; do not optimize prematurely.
-3. **Modes** — `body.dataset.mode` is `"normal" | "insert" | "palette" | "confirm" | "image"` (the new-plan and background dialogs reuse `palette`). The desktop keyboard handler is a no-op in any non-`normal` mode.
-   - **Undo** — `pushHistory()` deep-clones `state.data` + `selection` onto a 5-deep stack right before each mutating action; `undo()` (Ctrl+Z, normal mode only) pops and restores. Restored snapshots keep the live `state.data.version` so the next save doesn't 409. Abandoned creations (a new entry/list created then cancelled) call `popHistory()` to discard their snapshot, so undo never replays a no-op. `applyRemote()` clears the stack — its snapshots are relative to the superseded blob.
-4. **Drag** — SortableJS, two groups (`"lists"` horizontal, `"entries"` for items). Cross-list moves work in single view too: a drag starting there flips the board to multi view for its duration (`revealSiblingsForDrag`) and back on drop. Our own edge auto-scroll replaces Sortable's. Disabled while editing so text selection isn't hijacked. Desktop single view also cycles lists on an 80px+ horizontal mouse drag over empty board.
+3. **Modes** — `body.dataset.mode` is `"normal" | "insert" | "palette" | "confirm" | "image"` (the background dialog reuses `palette`). The desktop keyboard handler is a no-op in any non-`normal` mode.
+   - **Undo** — `pushHistory()` deep-clones `state.data` + `selection` onto a 5-deep stack right before each mutating action; `undo()` (Ctrl+Z, normal mode only) pops and restores. Restored snapshots keep the live `state.data.version` so the next save doesn't 409. Abandoned creations (a new entry/list created then cancelled) pop their snapshot off `history`, so undo never replays a no-op. `applyRemote()` clears the stack — its snapshots are relative to the superseded blob.
+4. **Drag** — SortableJS, two groups (`"lists"` horizontal, `"entries"` for items). Cross-list moves work in single view too: a drag starting there flips the board to multi view for its duration (`onStart` in `attachSortables`) and back on drop. Our own edge auto-scroll replaces Sortable's. Disabled while editing so text selection isn't hijacked. Desktop single view also cycles lists on an 80px+ horizontal mouse drag over empty board.
 
 ### Desktop key map (normal mode)
 
@@ -102,7 +102,7 @@ Four concerns, in this order in the file:
 | `e`      | Edit current list name (or selected entry, if one is selected)   |
 | `r`      | Delete current plan (confirm dialog; `Plan` is protected)        |
 | `b`      | Set / clear background image URL for current plan                |
-| `Space`  | Plan palette — fuzzy match, Enter switches plan. Up/Down (or Shift+J/K) wraps. Shift+↑/↓ with an empty query reorders plans; `Plan` stays put. While a query is typed, a `<New plan>` row sits at the bottom which opens the new-plan dialog. |
+| `Space`  | Plan palette — fuzzy match, Enter switches plan. Up/Down (or Shift+J/K) wraps. Shift+↑/↓ with an empty query reorders plans; `Plan` stays put. While a query is typed, a `<New plan>` row sits at the bottom which creates a plan named after the query and opens its first list's name for editing. |
 | `v`      | Toggle multi-list / single-list view (desktop only)              |
 | `o`      | Open the selected entry's image in the full-screen preview       |
 | Ctrl+V   | Attach a clipboard image to the selected entry (replaces any existing one). Also works while editing — that's how mobile attaches, via the long-press paste menu. |

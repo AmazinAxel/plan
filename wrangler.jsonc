@@ -3,8 +3,13 @@
 	"name": "plan",
 	"compatibility_date": "2025-10-08",
 	"main": "./worker.ts",
+	// Minifies public/ into dist/ (see build.ts).
+	"build": {
+		"command": "bun run build",
+		"watch_dir": "public"
+	},
 	"assets": {
-		"directory": "./public",
+		"directory": "./dist",
 		"binding": "ASSETS",
 		// "/" is assembled by the worker (see servePage); the other two get immutable
 		// caching there when requested with a content version.

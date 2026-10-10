@@ -53,29 +53,21 @@ const SESSION_PAYLOAD = "v1";
 // every authed page load, so a device in use never reaches it.
 const MAX_AGE = 400 * 24 * 60 * 60;
 
-export async function buildSessionCookie(secretHex: string, secure: boolean): Promise<string> {
+// `Secure` only over https, so a plain-http `wrangler dev` can still sign in.
+export async function buildSessionCookie(secretHex: string, req: Request): Promise<string> {
+  const secure = new URL(req.url).protocol === "https:" ? "Secure; " : "";
   const token = await hmacHex(secretHex, SESSION_PAYLOAD);
-  const flags = `HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Path=/; Max-Age=${MAX_AGE}`;
-  return `${COOKIE_NAME}=${token}; ${flags}`;
+  return `${COOKIE_NAME}=${token}; HttpOnly; ${secure}SameSite=Strict; Path=/; Max-Age=${MAX_AGE}`;
 }
 
-function readCookie(req: Request, name: string): string | null {
-  const header = req.headers.get("Cookie");
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const [k, ...v] = part.trim().split("=");
-    if (k === name) return v.join("=");
-  }
-  return null;
-}
+const readSession = (req: Request) =>
+  req.headers.get("Cookie")?.match(/(?:^|;\s*)session=([^;]*)/)?.[1] ?? null;
 
 // Cheap pre-check, so a request with no session at all is turned away without
 // spending a KV read on the secret.
-export const hasSessionCookie = (req: Request) => readCookie(req, COOKIE_NAME) !== null;
+export const hasSessionCookie = (req: Request) => readSession(req) !== null;
 
 export async function verifyRequest(req: Request, secretHex: string): Promise<boolean> {
-  const token = readCookie(req, COOKIE_NAME);
-  if (!token) return false;
-  const expected = await hmacHex(secretHex, SESSION_PAYLOAD);
-  return constantTimeEqual(token, expected);
+  const token = readSession(req);
+  return !!token && constantTimeEqual(token, await hmacHex(secretHex, SESSION_PAYLOAD));
 }

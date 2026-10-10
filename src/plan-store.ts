@@ -44,8 +44,7 @@ function backupTimestamp(d = new Date()): string {
 // Cloudflare KV dashboard as `backup:<mm-dd-yyyy--hh-mm>` (Los Angeles time); to
 // restore, copy a backup's value back into the `data` key.
 export async function backupData(kv: KVNamespace, data: Data): Promise<void> {
-  const key = `backup:${backupTimestamp()}`;
-  await kv.put(key, JSON.stringify(data), { expirationTtl: BACKUP_TTL_SECONDS });
+  await kv.put(`backup:${backupTimestamp()}`, JSON.stringify(data), { expirationTtl: BACKUP_TTL_SECONDS });
 }
 
 function seed(): Data {

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "bun build.ts",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit"
   },

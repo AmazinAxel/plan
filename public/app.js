@@ -22,6 +22,8 @@ const state = {
 };
 
 const uuid = () => crypto.randomUUID();
+const wrap = (i, n) => ((i % n) + n) % n;
+const isField = (el) => el?.tagName === "INPUT" || el?.tagName === "TEXTAREA";
 const activePlan = () =>
   state.data.plans.find((p) => p.id === state.data.activePlanId) || state.data.plans[0];
 
@@ -102,9 +104,6 @@ function pushHistory() {
   });
   if (history.length > HISTORY_LIMIT) history.shift();
 }
-// Drop the most recent snapshot — used when an action is abandoned (e.g. a new
-// entry/list created then cancelled), so undo doesn't replay a no-op.
-function popHistory() { history.pop(); }
 // The server deletes an image the moment the blob stops referencing it, so a
 // snapshot must never hold a reference the live data has dropped — undoing into
 // one would restore a permanently broken image. Runs on every save, which is
@@ -208,20 +207,14 @@ function render() {
   $("m-del-plan").hidden = plan.name === "Plan";
   document.title = !plan.name ? "plan" : plan.name === "Plan" ? "Plan" : `${plan.name} plan`;
   const bg = plan.background;
-  if (bg) {
-    body.style.backgroundImage = `url("${bg.replace(/"/g, "%22")}")`;
-    body.style.backgroundSize = "cover";
-    body.style.backgroundPosition = "center";
-  } else {
-    body.style.backgroundImage = "";
-  }
+  body.style.backgroundImage = bg ? `url("${bg.replace(/"/g, "%22")}")` : "";
 }
 
 function renderDots(plan) {
   const dots = $("dots");
   dots.innerHTML = "";
-  if (plan.lists.length <= 1) { dots.hidden = true; return; }
-  dots.hidden = false;
+  dots.hidden = plan.lists.length <= 1;
+  if (dots.hidden) return;
   plan.lists.forEach((_, i) => {
     const d = document.createElement("span");
     if (i === state.selection.listIndex) d.dataset.active = "";
@@ -241,6 +234,14 @@ function setDragEnabled(on) { sortables.forEach((s) => s.option("disabled", !on)
 // Auto-scroll a list while dragging an entry near its top/bottom edge. Works for
 // both desktop (native drag -> dragover) and touch (Sortable fallback -> touchmove).
 const autoScroll = { active: false, raf: 0, x: 0, y: 0 };
+// Speed for a pointer at `v` inside [lo, hi]: ramps up to `max` px/frame across
+// an edge zone, zero in the middle.
+function edgeSpeed(v, lo, hi, zone, max) {
+  if (v < lo + zone) return -max * ((lo + zone - v) / zone);
+  if (v > hi - zone) return max * ((v - (hi - zone)) / zone);
+  return 0;
+}
+const inside = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 function autoScrollTrack(e) {
   const t = e.touches?.[0] || e.changedTouches?.[0] || e;
   if (t.clientX != null) { autoScroll.x = t.clientX; autoScroll.y = t.clientY; }
@@ -248,29 +249,14 @@ function autoScrollTrack(e) {
 function autoScrollStep() {
   if (!autoScroll.active) return;
   const { x, y } = autoScroll;
-  // Horizontal board scroll near its left/right edges. Reveals the neighbouring
-  // lists while dragging a list, or an entry across lists.
-  {
-    const r = board.getBoundingClientRect();
-    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-      const zone = Math.max(40, r.width * 0.08); // left/right 8% (min 40px)
-      const maxSpeed = 20; // px per frame at the very edge
-      let dx = 0;
-      if (x < r.left + zone) dx = -maxSpeed * ((r.left + zone - x) / zone);
-      else if (x > r.right - zone) dx = maxSpeed * ((x - (r.right - zone)) / zone);
-      if (dx) board.scrollLeft += dx;
-    }
-  }
-  // Vertical scroll within whichever list the pointer is hovering.
+  // Horizontal board scroll near its left/right edges (8%, min 40px). Reveals the
+  // neighbouring lists while dragging a list, or an entry across lists.
+  const b = board.getBoundingClientRect();
+  if (inside(b, x, y)) board.scrollLeft += edgeSpeed(x, b.left, b.right, Math.max(40, b.width * 0.08), 20);
+  // Vertical scroll within whichever list the pointer is hovering (10%, min 24px).
   board.querySelectorAll(".entries").forEach((ul) => {
     const r = ul.getBoundingClientRect();
-    if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
-    const zone = Math.max(24, r.height * 0.1); // top/bottom 10% (min 24px for short lists)
-    const maxSpeed = 14; // px per frame at the very edge
-    let delta = 0;
-    if (y < r.top + zone) delta = -maxSpeed * ((r.top + zone - y) / zone);
-    else if (y > r.bottom - zone) delta = maxSpeed * ((y - (r.bottom - zone)) / zone);
-    if (delta) ul.scrollTop += delta;
+    if (inside(r, x, y)) ul.scrollTop += edgeSpeed(y, r.top, r.bottom, Math.max(24, r.height * 0.1), 14);
   });
   autoScroll.raf = requestAnimationFrame(autoScrollStep);
 }
@@ -296,67 +282,44 @@ function attachSortables() {
   // Sortable loads async (see index.html); its load handler calls back in here.
   if (!plan || !window.Sortable) return;
 
-  // Set when a drag begins in single view: siblings are revealed for the
-  // duration of the drag, then hidden again on drop. Shared by both the list
-  // sortable and the entry sortables so either kind of drag can reach the
-  // neighbouring lists. Single view shows only the active list, so a dragged
-  // list/entry would otherwise have nowhere to go.
-  let autoMulti = false;
-  function revealSiblingsForDrag() {
+  // Shared by the list sortable and the entry sortables. In single view,
+  // body.dragging makes the CSS reveal every list for the drag's duration (so a
+  // dragged list/entry has somewhere to go) and hide them again on drop; all
+  // that's left here is keeping the grabbed list where it was, centred.
+  const onStart = () => {
+    body.classList.add("dragging");
+    startAutoScroll();
     if (body.dataset.view !== "single") return;
-    autoMulti = true;
-    body.dataset.view = "multi";
-    const sec = board.querySelectorAll(".list")[state.selection.listIndex];
-    if (!sec) return;
-    // The active list is centered in single view. Revealing the siblings would
-    // otherwise let the first/last list slide to the board edge (nothing on one
-    // side to scroll against). Pad the board ends by exactly the empty space
-    // that flanks a centered list, so every list — including the first and last
-    // — can scroll to the same center position and the grabbed one stays put.
-    const pad = Math.max(0, (board.clientWidth - sec.offsetWidth) / 2);
-    board.style.paddingLeft = board.style.paddingRight = pad + "px";
-    sec.scrollIntoView({ behavior: "instant", inline: "center", block: "nearest" });
-  }
-  function clearDragPadding() {
-    board.style.paddingLeft = board.style.paddingRight = "";
-  }
+    board.querySelectorAll(".list")[state.selection.listIndex]
+      ?.scrollIntoView({ behavior: "instant", inline: "center", block: "nearest" });
+  };
+  const endDrag = () => {
+    body.classList.remove("dragging");
+    stopAutoScroll();
+  };
   sortables.push(Sortable.create(board, {
     group: "lists",
     animation: 120,
     draggable: ".list",
-    filter: ".entries, .list-name input, .entry input",
+    filter: ".entries, .list-name input",
     preventOnFilter: false,
-    onStart: () => {
-      body.classList.add("dragging");
-      startAutoScroll();
-      revealSiblingsForDrag();
-    },
+    onStart,
     onEnd: (ev) => {
-      body.classList.remove("dragging");
-      stopAutoScroll();
-      clearDragPadding();
-      const reverted = autoMulti;
-      autoMulti = false;
-      if (ev.oldIndex !== ev.newIndex) {
-        pushHistory();
-        const moved = plan.lists.splice(ev.oldIndex, 1)[0];
-        plan.lists.splice(ev.newIndex, 0, moved);
-        state.selection.listIndex = ev.newIndex;
-        save();
-      }
-      if (reverted) body.dataset.view = "single";
-      // Re-attach sortables (via render) whenever the order changed or the view
-      // was flipped back, so the entry sortables get the right pull/put again.
-      if (reverted || ev.oldIndex !== ev.newIndex) render();
+      endDrag();
+      if (ev.oldIndex === ev.newIndex) return;
+      pushHistory();
+      plan.lists.splice(ev.newIndex, 0, ...plan.lists.splice(ev.oldIndex, 1));
+      state.selection.listIndex = ev.newIndex;
+      save(); render();
     }
   }));
 
   board.querySelectorAll(".entries").forEach((ul) => {
     sortables.push(Sortable.create(ul, {
       // Cross-list moves stay enabled even in single view: the drag reveals the
-      // neighbouring lists (see revealSiblingsForDrag) so an entry can be dropped
+      // neighbouring lists (see onStart) so an entry can be dropped
       // into any of them.
-      group: { name: "entries", pull: true, put: true },
+      group: "entries",
       animation: 120,
       draggable: ".entry",
       scroll: false, // handled by our own edge auto-scroll (startAutoScroll)
@@ -364,30 +327,17 @@ function attachSortables() {
       delay: 250,
       delayOnTouchOnly: true,
       touchStartThreshold: 5,
-      onStart: () => {
-        body.classList.add("dragging");
-        startAutoScroll();
-        revealSiblingsForDrag();
-      },
+      onStart,
       onEnd: (ev) => {
-        body.classList.remove("dragging");
-        stopAutoScroll();
-        clearDragPadding();
-        const reverted = autoMulti;
-        autoMulti = false;
+        endDrag();
         const fromList = plan.lists.find((l) => l.id === ev.from.dataset.listId);
         const toList = plan.lists.find((l) => l.id === ev.to.dataset.listId);
-        const moved = fromList && toList && !(fromList === toList && ev.oldIndex === ev.newIndex);
-        if (moved) {
-          pushHistory();
-          const [entry] = fromList.entries.splice(ev.oldIndex, 1);
-          toList.entries.splice(ev.newIndex, 0, entry);
-          state.selection.listIndex = plan.lists.indexOf(toList);
-          state.selection.entryIndex = ev.newIndex;
-          save();
-        }
-        if (reverted) body.dataset.view = "single";
-        if (moved || reverted) render();
+        if (!fromList || !toList || (fromList === toList && ev.oldIndex === ev.newIndex)) return;
+        pushHistory();
+        toList.entries.splice(ev.newIndex, 0, ...fromList.entries.splice(ev.oldIndex, 1));
+        state.selection.listIndex = plan.lists.indexOf(toList);
+        state.selection.entryIndex = ev.newIndex;
+        save(); render();
       }
     }));
   });
@@ -441,7 +391,7 @@ function keepFocusOnTabSwitch(input) {
     e.stopImmediatePropagation();
     const onFocus = () => {
       window.removeEventListener("focus", onFocus);
-      if (document.body.dataset.mode === "insert") input.focus();
+      if (body.dataset.mode === "insert") input.focus();
     };
     window.addEventListener("focus", onFocus);
   };
@@ -480,9 +430,8 @@ function editList(listIndex, isNew = false) {
     stopKeep();
     if (isNew && !list.name && list.entries.length === 0) {
       plan.lists.splice(listIndex, 1);
-      if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
       state.selection.entryIndex = -1;
-      popHistory(); // discard the snapshot newList() pushed for this abandoned list
+      history.pop(); // discard the snapshot newList() pushed for this abandoned list
       save();
     }
     setMode("normal"); render();
@@ -499,8 +448,7 @@ function editList(listIndex, isNew = false) {
 function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chainable = false) {
   const plan = activePlan();
   const list = plan.lists[listIndex];
-  if (!list) return;
-  const entry = list.entries[entryIndex];
+  const entry = list?.entries[entryIndex];
   if (!entry) return;
   setMode("insert");
   setDragEnabled(false);
@@ -524,8 +472,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   resize();
   syncSep();
   input.focus();
-  const caret = caretPos != null && caretPos >= 0 && caretPos <= input.value.length
-    ? caretPos : input.value.length;
+  const caret = caretPos ?? input.value.length;
   const applyCaret = () => input.setSelectionRange(caret, caret);
   applyCaret();
   // iOS WebKit parks the caret at the focus position (end of text) and won't
@@ -540,7 +487,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   const commit = () => {
     stopKeep();
     const v = undash(input.value.trim());
-    if (isNew) { if (!v && !entry.image) popHistory(); } // abandoned new entry — discard its snapshot
+    if (isNew) { if (!v && !entry.image) history.pop(); } // abandoned new entry — discard its snapshot
     else if (v !== entry.text) pushHistory();
     if (v) entry.text = v;
     // An entry that carries an image survives an empty field — the picture is
@@ -580,7 +527,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
     }
     else if (e.key === "Escape") {
       e.preventDefault(); cancelled = true; stopKeep(); state.chainArmed = false;
-      if (!entry.text && !entry.image) { list.entries.splice(entryIndex, 1); if (isNew) popHistory(); save(); }
+      if (!entry.text && !entry.image) { list.entries.splice(entryIndex, 1); if (isNew) history.pop(); save(); }
       setMode("normal"); render();
     }
     e.stopPropagation();
@@ -617,10 +564,8 @@ function newEntryBelow(chainable = false) {
 }
 
 function toggleTodo() {
-  const plan = activePlan();
-  const list = plan.lists[state.selection.listIndex];
-  if (!list || state.selection.entryIndex < 0) return;
-  const entry = list.entries[state.selection.entryIndex];
+  const { list, entry } = selected() || {};
+  if (!entry) return;
   pushHistory();
   if (entry.todo) {
     delete entry.todo;
@@ -633,19 +578,16 @@ function toggleTodo() {
 }
 
 function deleteEntry() {
-  const plan = activePlan();
-  const list = plan.lists[state.selection.listIndex];
-  if (!list || state.selection.entryIndex < 0) return;
+  const { list } = selected() || {};
+  if (!list) return;
   pushHistory();
   list.entries.splice(state.selection.entryIndex, 1);
-  if (state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
   saveNow(); render();
 }
 
 function deleteCurrentPlan() {
   const plan = activePlan();
-  if (!plan) return;
-  if (plan.name === "Plan") return; // the default plan is protected
+  if (!plan || plan.name === "Plan") return; // the default plan is protected
   confirmModal(`delete plan "${plan.name || "—"}"?`, () => {
     pushHistory();
     state.data.plans = state.data.plans.filter((p) => p.id !== plan.id);
@@ -673,7 +615,6 @@ function deleteCurrentList() {
   const doDelete = () => {
     pushHistory();
     plan.lists.splice(state.selection.listIndex, 1);
-    if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
     state.selection.entryIndex = -1;
     saveNow(); render();
   };
@@ -685,10 +626,7 @@ function deleteCurrentList() {
 // (or the first) so single view always has a list to show instead of a blank
 // board.
 function toggleView() {
-  if (state.selection.listIndex < 0) {
-    const idx = resolvedListIndex();
-    if (idx >= 0) { state.selection.listIndex = idx; state.selection.entryIndex = -1; }
-  }
+  if (state.selection.listIndex < 0) state.selection.listIndex = resolvedListIndex();
   body.dataset.view = body.dataset.view === "single" ? "multi" : "single";
   render();
 }
@@ -706,29 +644,14 @@ function move(dx, dy) {
     render(); scrollSelectionIntoView();
     return;
   }
-  if (dx) {
-    const n = plan.lists.length;
-    let next = state.selection.listIndex + dx;
-    // Wrap past the ends in both single- and multi-list views.
-    next = ((next % n) + n) % n;
-    state.selection.listIndex = next;
-    const list = plan.lists[state.selection.listIndex];
-    if (list && state.selection.entryIndex >= list.entries.length) state.selection.entryIndex = list.entries.length - 1;
-  }
+  // Lists wrap at both ends, in both views; render() clamps the entry index.
+  if (dx) state.selection.listIndex = wrap(state.selection.listIndex + dx, plan.lists.length);
   if (dy) {
-    const list = plan.lists[state.selection.listIndex];
-    if (!list || list.entries.length === 0) { state.selection.entryIndex = -1; }
-    else if (state.selection.entryIndex === -1) {
-      // From the header: up jumps to the last entry, down to the first.
-      state.selection.entryIndex = dy > 0 ? 0 : list.entries.length - 1;
-    }
-    else {
-      const next = state.selection.entryIndex + dy;
-      // Up off the first entry selects the header; down off the last wraps to top.
-      if (next < 0) state.selection.entryIndex = -1;
-      else if (next >= list.entries.length) state.selection.entryIndex = 0;
-      else state.selection.entryIndex = next;
-    }
+    const n = plan.lists[state.selection.listIndex].entries.length;
+    const ei = state.selection.entryIndex;
+    // From the header: up jumps to the last entry, down to the first. Up off the
+    // first entry selects the header; down off the last wraps to the top.
+    state.selection.entryIndex = !n ? -1 : ei === -1 ? (dy > 0 ? 0 : n - 1) : ei + dy >= n ? 0 : ei + dy;
   }
   render();
   scrollSelectionIntoView();
@@ -736,48 +659,29 @@ function move(dx, dy) {
 
 // shift+arrow: reorder the selected entry (or list if no entry is selected).
 function shiftMove(dx, dy) {
+  // Everything wraps past the ends, in both views.
   const plan = activePlan();
-  if (!plan) return;
-  const list = plan.lists[state.selection.listIndex];
+  const li = state.selection.listIndex, ei = state.selection.entryIndex;
+  const list = plan?.lists[li];
   if (!list) return;
-
-  if (state.selection.entryIndex >= 0) {
-    const ei = state.selection.entryIndex;
-    if (dy) {
-      const n = list.entries.length;
-      if (n < 2) return;
-      pushHistory();
-      // Wrap past the ends: moving up off the top sends the entry to the bottom, and vice versa.
-      const ni = (ei + dy + n) % n;
-      const [moved] = list.entries.splice(ei, 1);
-      list.entries.splice(ni, 0, moved);
-      state.selection.entryIndex = ni;
-    } else if (dx) {
-      const n = plan.lists.length;
-      if (n < 2) return;
-      // Wrap past the ends in both single- and multi-list views.
-      const raw = state.selection.listIndex + dx;
-      const ti = ((raw % n) + n) % n;
-      pushHistory();
-      const target = plan.lists[ti];
-      const [moved] = list.entries.splice(ei, 1);
-      const insertAt = Math.min(ei, target.entries.length);
-      target.entries.splice(insertAt, 0, moved);
-      state.selection.listIndex = ti;
-      state.selection.entryIndex = insertAt;
-    }
-  } else if (dx) {
-    const n = plan.lists.length;
-    if (n < 2) return;
-    const li = state.selection.listIndex;
-    // Wrap past the ends in both single- and multi-list views.
-    const raw = li + dx;
-    const ni = ((raw % n) + n) % n;
-    pushHistory();
+  const n = dy ? list.entries.length : plan.lists.length;
+  if (n < 2 || (dy && ei < 0)) return;
+  pushHistory();
+  if (dy) {
+    const ni = wrap(ei + dy, n);
+    list.entries.splice(ni, 0, ...list.entries.splice(ei, 1));
+    state.selection.entryIndex = ni;
+  } else if (ei >= 0) {
+    const ti = wrap(li + dx, n);
+    const target = plan.lists[ti];
+    const at = Math.min(ei, target.entries.length);
+    target.entries.splice(at, 0, ...list.entries.splice(ei, 1));
+    state.selection.listIndex = ti;
+    state.selection.entryIndex = at;
+  } else {
+    const ni = wrap(li + dx, n);
     [plan.lists[li], plan.lists[ni]] = [plan.lists[ni], plan.lists[li]];
     state.selection.listIndex = ni;
-  } else {
-    return;
   }
   save(); render(); scrollSelectionIntoView();
 }
@@ -860,20 +764,17 @@ function confirmModal(text, onYes) {
   $("confirm-text").textContent = text;
   setMode("confirm");
   let confirmed = false;
-  const onSubmit = (e) => { e.preventDefault(); confirmed = true; dlg.close(); };
-  const onKey = (e) => {
+  const ac = new AbortController();
+  const signal = ac.signal;
+  form.addEventListener("submit", (e) => { e.preventDefault(); confirmed = true; dlg.close(); }, { signal });
+  dlg.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); form.requestSubmit(); }
-  };
-  const onClose = () => {
-    form.removeEventListener("submit", onSubmit);
-    dlg.removeEventListener("keydown", onKey);
-    dlg.removeEventListener("close", onClose);
+  }, { signal });
+  dlg.addEventListener("close", () => {
+    ac.abort();
     if (confirmed) onYes();
     setMode("normal");
-  };
-  form.addEventListener("submit", onSubmit);
-  dlg.addEventListener("keydown", onKey);
-  dlg.addEventListener("close", onClose);
+  }, { signal });
   dlg.showModal();
 }
 
@@ -897,7 +798,7 @@ function openPalette() {
   const matching = () => state.data.plans.filter((p) => !input.value || fuzzyMatch(input.value, p.name));
   // "<New plan>" is appended after all matches, at index matches.length, but
   // only while a query is typed.
-  const showNew = () => !!input.value;
+  const showNew = () => !!input.value.trim();
   const count = () => matching().length + (showNew() ? 1 : 0);
   const refresh = () => {
     const matches = matching();
@@ -916,9 +817,8 @@ function openPalette() {
     if (!showNew()) return;
     const newLi = document.createElement("li");
     newLi.textContent = "<New plan>";
-    newLi.dataset.newPlan = "";
     if (highlighted === matches.length) newLi.dataset.active = "";
-    fastTap(newLi, () => createNew());
+    fastTap(newLi, createNew);
     list.appendChild(newLi);
   };
 
@@ -926,12 +826,15 @@ function openPalette() {
     state.data.activePlanId = planId;
     state.selection = { listIndex: 0, entryIndex: -1 };
     save();
-    cleanup(); dlg.close(); setMode("normal"); render();
+    ac.abort(); dlg.close(); setMode("normal"); render();
   };
 
   const createNew = () => {
-    const seed = input.value.trim();
-    cleanup(); dlg.close(); setMode("normal"); openNewPlan(seed);
+    pushHistory();
+    const p = { id: uuid(), name: input.value.trim(), lists: [{ id: uuid(), name: "", entries: [] }] };
+    state.data.plans.push(p);
+    pick(p.id);
+    editList(0, true);
   };
 
   // Shift+Up/Down reorders the highlighted plan. Only with an empty query, so
@@ -939,20 +842,19 @@ function openPalette() {
   // "Plan" is fixed and nothing swaps across it; "<New plan>" sits one past the
   // end of plans, so an out-of-range neighbour refuses the move on its own.
   const reorder = (dir) => {
-    if (input.value) return false;
     const plans = state.data.plans;
     const i = highlighted, j = highlighted + dir;
-    if (!plans[i] || !plans[j]) return false;
-    if (plans[i].name === "Plan" || plans[j].name === "Plan") return false;
+    if (input.value || !plans[i] || !plans[j] || plans[i].name === "Plan" || plans[j].name === "Plan") return;
     pushHistory();
     [plans[i], plans[j]] = [plans[j], plans[i]];
     highlighted = j;
     save();
     refresh();
-    return true;
   };
 
-  const onKey = (e) => {
+  const ac = new AbortController();
+  const signal = ac.signal;
+  input.addEventListener("keydown", (e) => {
     const matches = matching();
     const total = count();
     const down = e.key === "ArrowDown" || e.key === "J";
@@ -960,69 +862,20 @@ function openPalette() {
     if (e.shiftKey && (down || up)) { e.preventDefault(); reorder(down ? 1 : -1); }
     else if ((down || up) && total) {
       e.preventDefault();
-      highlighted = (highlighted + (down ? 1 : -1) + total) % total;
+      highlighted = wrap(highlighted + (down ? 1 : -1), total);
       refresh();
     }
     else if (e.key === "Enter") {
       e.preventDefault();
-      if (showNew() && highlighted === matches.length) { createNew(); return; }
-      if (matches[highlighted]) pick(matches[highlighted].id);
+      if (showNew() && highlighted === matches.length) createNew();
+      else if (matches[highlighted]) pick(matches[highlighted].id);
     }
-  };
-  const onInput = () => { highlighted = 0; refresh(); };
-  const onClose = () => { cleanup(); if (body.dataset.mode === "palette") setMode("normal"); };
-  const cleanup = () => {
-    input.removeEventListener("keydown", onKey);
-    input.removeEventListener("input", onInput);
-    dlg.removeEventListener("close", onClose);
-  };
-  input.addEventListener("keydown", onKey);
-  input.addEventListener("input", onInput);
-  dlg.addEventListener("close", onClose);
+  }, { signal });
+  input.addEventListener("input", () => { highlighted = 0; refresh(); }, { signal });
+  dlg.addEventListener("close", () => { ac.abort(); if (body.dataset.mode === "palette") setMode("normal"); }, { signal });
   refresh();
   dlg.showModal();
   input.focus();
-}
-
-function openNewPlan(seedName = "") {
-  const dlg = $("new-plan");
-  const input = $("new-plan-input");
-  input.value = seedName;
-  setMode("palette"); // reuse the modal-open state for the global key handler
-
-  let created = false;
-  const submit = () => {
-    const name = input.value.trim();
-    if (!name) return;
-    pushHistory();
-    const p = { id: uuid(), name, lists: [{ id: uuid(), name: "", entries: [] }] };
-    state.data.plans.push(p);
-    state.data.activePlanId = p.id;
-    state.selection = { listIndex: 0, entryIndex: -1 };
-    created = true;
-    save();
-    dlg.close();
-  };
-  const onKey = (e) => {
-    if (e.key === "Enter") { e.preventDefault(); submit(); }
-  };
-  const onSubmit = (e) => { e.preventDefault(); submit(); };
-  const onClose = () => {
-    cleanup();
-    setMode("normal");
-    if (created) { render(); editList(0, true); }
-  };
-  const cleanup = () => {
-    input.removeEventListener("keydown", onKey);
-    $("new-plan-form").removeEventListener("submit", onSubmit);
-    dlg.removeEventListener("close", onClose);
-  };
-  input.addEventListener("keydown", onKey);
-  $("new-plan-form").addEventListener("submit", onSubmit);
-  dlg.addEventListener("close", onClose);
-  dlg.showModal();
-  input.focus();
-  input.select();
 }
 
 function openBg() {
@@ -1042,18 +895,15 @@ function openBg() {
     saveNow();
     dlg.close();
   };
-  const onSubmit = (e) => { e.preventDefault(); submit(); };
-  const onKey = (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
-  const onClose = () => {
-    form.removeEventListener("submit", onSubmit);
-    input.removeEventListener("keydown", onKey);
-    dlg.removeEventListener("close", onClose);
+  const ac = new AbortController();
+  const signal = ac.signal;
+  form.addEventListener("submit", (e) => { e.preventDefault(); submit(); }, { signal });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }, { signal });
+  dlg.addEventListener("close", () => {
+    ac.abort();
     setMode("normal");
     if (confirmed) render();
-  };
-  form.addEventListener("submit", onSubmit);
-  input.addEventListener("keydown", onKey);
-  dlg.addEventListener("close", onClose);
+  }, { signal });
   dlg.showModal();
   input.focus();
 }
@@ -1110,11 +960,15 @@ function findEntry(listId, entryId) {
   return null;
 }
 
-function selectedEntryIds() {
-  const plan = activePlan();
-  const list = plan?.lists[state.selection.listIndex];
+function selected() {
+  const list = activePlan()?.lists[state.selection.listIndex];
   const entry = list && state.selection.entryIndex >= 0 ? list.entries[state.selection.entryIndex] : null;
-  return entry ? { listId: list.id, entryId: entry.id } : null;
+  return entry ? { list, entry } : null;
+}
+
+function selectedEntryIds() {
+  const sel = selected();
+  return sel && { listId: sel.list.id, entryId: sel.entry.id };
 }
 
 // `size` is the entry's recorded [width, height]. With it, the element's box is
@@ -1304,17 +1158,8 @@ function openImageView(listId, entryId) {
 // preview's delete acts on something the board also shows as selected.
 function openImageViewFromNode(imgEl) {
   const li = imgEl.closest(".entry");
-  const sec = li?.closest(".list");
-  if (!li || !sec) return;
-  const plan = activePlan();
-  const listIndex = plan.lists.findIndex((l) => l.id === sec.dataset.listId);
-  if (listIndex < 0) return;
-  const entryIndex = plan.lists[listIndex].entries.findIndex((en) => en.id === li.dataset.entryId);
-  if (entryIndex < 0) return;
-  state.selection.listIndex = listIndex;
-  state.selection.entryIndex = entryIndex;
-  render();
-  openImageView(sec.dataset.listId, li.dataset.entryId);
+  const listId = li.closest(".list").dataset.listId, entryId = li.dataset.entryId;
+  if (selectById(listId, entryId)) openImageView(listId, entryId);
 }
 
 (function setupImageView() {
@@ -1366,31 +1211,22 @@ function deselectOutside() {
   render();
 }
 
-// Desktop deselects on click: a drag-to-scroll moves the pointer and fires no
-// click, so the selection survives scrolling. Touch deselects on pointerdown for
-// instant feedback (see setupTouch).
+// ---------- click/tap to edit ----------
+// Opening an editor stays on `click`: the native click is what makes mobile
+// browsers draw the caret and raise the keyboard for a programmatic focus().
+// Firing our own focus() on pointerup instead left the caret invisible. A
+// scroll/drag fires no click, so this only triggers on a genuine tap.
 board.addEventListener("click", (e) => {
-  if (state.isTouch) return;
-  if (body.dataset.mode !== "normal") return;
-  if (e.target.closest(".list")) return;
-  deselectOutside();
-});
-
-// ---------- desktop click-to-edit ----------
-board.addEventListener("click", (e) => {
-  if (state.isTouch) return;
-  if (body.dataset.mode !== "normal") return;
-  if (e.target.matches(".entry img")) { openImageViewFromNode(e.target); return; }
-  const entry = e.target.closest(".entry");
-  if (!entry) return;
-  const sec = entry.closest(".list");
-  const li = [...board.querySelectorAll(".list")].indexOf(sec);
-  const ei = [...sec.querySelectorAll(".entry")].indexOf(entry);
-  state.selection.listIndex = li;
-  state.selection.entryIndex = ei;
-  render();
-  const fresh = board.querySelectorAll(".list")[li].querySelectorAll(".entry")[ei];
-  editEntry(li, ei, false, caretOffsetFromPoint(e.clientX, e.clientY, fresh));
+  if (body.dataset.mode !== "normal") return; // already editing — let the field handle the tap
+  const t = e.target;
+  if (t.matches(".entry img")) { openImageViewFromNode(t); return; }
+  const sec = t.closest(".list");
+  // Desktop deselects on click: a drag-to-scroll fires no click, so the
+  // selection survives scrolling. Touch deselects on pointerdown (setupTouch).
+  if (!sec) { if (!state.isTouch) deselectOutside(); return; }
+  const entry = t.closest(".entry");
+  if (entry) editEntryById(sec.dataset.listId, entry.dataset.entryId, e.clientX, e.clientY);
+  else if (state.isTouch && t.closest(".list-name")) editListById(sec.dataset.listId);
 });
 
 // ---------- mouse drag-to-scroll (desktop) ----------
@@ -1399,8 +1235,7 @@ board.addEventListener("click", (e) => {
   board.addEventListener("pointerdown", (e) => {
     if (state.isTouch || e.button !== 0) return;
     if (e.target.closest(".entry") || e.target.closest(".list-name")) return;
-    const ul = e.target.closest(".entries");
-    const scroller = ul || board;
+    const scroller = e.target.closest(".entries") || board;
     drag = { sx: scroller.scrollLeft, sy: scroller.scrollTop, x: e.clientX, y: e.clientY, scroller, pid: e.pointerId, moved: false };
   });
   board.addEventListener("pointermove", (e) => {
@@ -1412,12 +1247,13 @@ board.addEventListener("click", (e) => {
     drag.scroller.scrollTop = drag.sy - dy;
   });
   const end = (e) => {
-    if (drag?.moved) board.releasePointerCapture(drag.pid);
-    // Single-list desktop view: a horizontal drag on empty board area cycles lists.
-    if (drag && drag.moved && body.dataset.view === "single" && !state.isTouch && drag.scroller === board) {
-      const dx = e?.clientX != null ? e.clientX - drag.x : 0;
-      const dy = e?.clientY != null ? e.clientY - drag.y : 0;
-      if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) move(dx < 0 ? 1 : -1, 0);
+    if (drag?.moved) {
+      board.releasePointerCapture(drag.pid);
+      // Single-list view: a horizontal drag on empty board area cycles lists.
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (body.dataset.view === "single" && drag.scroller === board && Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) {
+        move(dx < 0 ? 1 : -1, 0);
+      }
     }
     drag = null;
     body.classList.remove("dragging-scroll");
@@ -1427,34 +1263,27 @@ board.addEventListener("click", (e) => {
 })();
 
 // ---------- keyboard ----------
+const ARROWS = {
+  ArrowUp: [0, -1], k: [0, -1], ArrowDown: [0, 1], j: [0, 1],
+  ArrowLeft: [-1, 0], h: [-1, 0], ArrowRight: [1, 0], l: [1, 0],
+};
 document.addEventListener("keydown", (e) => {
-  if (body.dataset.mode !== "normal") return;
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-  if (e.ctrlKey && !e.altKey && (e.key === "c" || e.key === "C")) {
-    const list = activePlan().lists[state.selection.listIndex];
-    const entry = list && state.selection.entryIndex >= 0 ? list.entries[state.selection.entryIndex] : null;
-    if (entry) { e.preventDefault(); navigator.clipboard?.writeText(entry.text); }
-    return;
-  }
-  if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
-    e.preventDefault(); undo(); return;
-  }
-  // Ctrl+Shift+V — remove the selected entry's image. Normal mode only, so it
-  // doesn't shadow paste-as-plain-text while editing.
-  if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "v" || e.key === "V")) {
-    e.preventDefault();
-    const sel = selectedEntryIds();
-    if (sel) detachImage(sel.listId, sel.entryId);
-    return;
+  if (body.dataset.mode !== "normal" || isField(e.target)) return;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (e.ctrlKey && !e.altKey) {
+    const sel = selected();
+    if (key === "c" && sel) { e.preventDefault(); navigator.clipboard?.writeText(sel.entry.text); }
+    else if (key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+    // Ctrl+Shift+V — remove the selected entry's image. Normal mode only, so it
+    // doesn't shadow paste-as-plain-text while editing.
+    else if (key === "v" && e.shiftKey) { e.preventDefault(); if (sel) detachImage(sel.list.id, sel.entry.id); }
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return; // let browser shortcuts (Ctrl+R, etc.) through
   if (e.key !== "Enter") state.chainArmed = false; // anything but a straight Enter run ends the burst
 
+  const dir = ARROWS[key];
+  if (dir) { e.preventDefault(); (e.shiftKey ? shiftMove : move)(...dir); return; }
   switch (e.key) {
-    case "ArrowUp": case "k": case "K":    e.preventDefault(); (e.shiftKey ? shiftMove : move)(0, -1); break;
-    case "ArrowDown": case "j": case "J":  e.preventDefault(); (e.shiftKey ? shiftMove : move)(0,  1); break;
-    case "ArrowLeft": case "h": case "H":  e.preventDefault(); (e.shiftKey ? shiftMove : move)(-1, 0); break;
-    case "ArrowRight": case "l": case "L": e.preventDefault(); (e.shiftKey ? shiftMove : move)( 1, 0); break;
     case "Enter":      e.preventDefault(); newEntryBelow(); break;
     case "Delete":
     case "Backspace":
@@ -1462,12 +1291,11 @@ document.addEventListener("keydown", (e) => {
       if (state.selection.entryIndex >= 0) deleteEntry();
       else deleteCurrentList();
       break;
-    case "Escape": {
+    case "Escape":
       e.preventDefault();
       state.selection.entryIndex = -1;
       render(); scrollSelectionIntoView();
       break;
-    }
     case "n": e.preventDefault(); newList(); break;
     case "b": e.preventDefault(); openBg(); break;
     case "Tab": e.preventDefault(); toggleTodo(); break;
@@ -1484,44 +1312,37 @@ document.addEventListener("keydown", (e) => {
       break;
     }
     case " ": e.preventDefault(); openPalette(); break;
-    case "v":
-      if (state.isTouch) break;
-      e.preventDefault();
-      toggleView();
-      break;
+    case "v": if (!state.isTouch) { e.preventDefault(); toggleView(); } break;
   }
 });
 
 // Open an entry / list header for editing by id, resolving indices against the
 // *current* data — safe to call right after a commit re-rendered the board (the
 // tapped DOM node is stale by then, but its id still points at live data).
-function editEntryById(listId, entryId, x, y) {
-  const plan = activePlan();
-  const li = plan.lists.findIndex((l) => l.id === listId);
-  if (li < 0) return;
-  const ei = plan.lists[li].entries.findIndex((en) => en.id === entryId);
-  if (ei < 0) return;
-  state.selection.listIndex = li;
-  state.selection.entryIndex = ei;
+// Select a list (no entryId) or entry by id and re-render. False if it's gone.
+function selectById(listId, entryId) {
+  const lists = activePlan().lists;
+  const li = lists.findIndex((l) => l.id === listId);
+  const ei = entryId ? lists[li]?.entries.findIndex((en) => en.id === entryId) ?? -1 : -1;
+  if (li < 0 || (entryId && ei < 0)) return false;
+  state.selection = { listIndex: li, entryIndex: ei };
   render();
+  return true;
+}
+function editEntryById(listId, entryId, x, y) {
+  if (!selectById(listId, entryId)) return;
+  const { listIndex: li, entryIndex: ei } = state.selection;
   const fresh = board.querySelectorAll(".list")[li]?.querySelectorAll(".entry")[ei];
   if (fresh) editEntry(li, ei, false, caretOffsetFromPoint(x, y, fresh));
 }
 function editListById(listId) {
-  const plan = activePlan();
-  const li = plan.lists.findIndex((l) => l.id === listId);
-  if (li < 0) return;
-  state.selection.listIndex = li;
-  state.selection.entryIndex = -1;
-  render();
-  editList(li);
+  if (selectById(listId)) editList(state.selection.listIndex);
 }
 
 // ---------- touch ----------
 function setupTouch() {
   if (!state.isTouch) return;
   body.classList.add("touch");
-  body.dataset.view = "single";
 
   // Touching the board while editing always commits the open field. What happens
   // next depends on where the touch landed and whether it travelled:
@@ -1545,7 +1366,7 @@ function setupTouch() {
     // The commit re-renders, so a trailing click would land on a detached node.
     if (swallow) swallowNextClick();
     const active = document.activeElement;
-    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) active.blur(); // commit + hide keyboard
+    if (isField(active)) active.blur(); // commit + hide keyboard
     else { setMode("normal"); render(); } // stuck in insert with no live field — recover
     if (!target) { deselectOutside(); return; }
     if (target.entryId) editEntryById(target.listId, target.entryId, x, y);
@@ -1581,7 +1402,7 @@ function setupTouch() {
   board.addEventListener("pointerdown", (e) => {
     if (body.dataset.mode === "insert") {
       const active = document.activeElement;
-      const editing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+      const editing = isField(active);
       if (editing && active.contains(e.target)) return;
       const target = editing ? editTargetFrom(e, active) : null;
       // A mouse on a touch-capable device fires no touchend — decide on press.
@@ -1589,42 +1410,9 @@ function setupTouch() {
       if (!dismiss) dismiss = { x: e.clientX, y: e.clientY, target }; // extra fingers ride the first one
       return;
     }
-    if (e.target.closest(".list")) return; // a real target handles its own tap
-    if (body.dataset.mode !== "normal") return;
-    deselectOutside();
+    // A real target handles its own tap.
+    if (!e.target.closest(".list") && body.dataset.mode === "normal") deselectOutside();
   }, true);
-
-  // Opening an editor stays on `click`: the native click is what makes mobile
-  // browsers draw the caret and raise the keyboard for a programmatic focus().
-  // Firing our own focus() on pointerup instead left the caret invisible. The
-  // click handler still runs right after the tap, and a scroll/drag fires no
-  // click, so it only triggers on a genuine tap.
-  board.addEventListener("click", (e) => {
-    if (body.dataset.mode !== "normal") return; // already editing — let the field handle the tap
-    if (e.target.matches(".entry img")) { openImageViewFromNode(e.target); return; }
-    const name = e.target.closest(".list-name");
-    if (name) {
-      const sec = name.closest(".list");
-      const li = [...board.querySelectorAll(".list")].indexOf(sec);
-      if (li < 0) return;
-      state.selection.listIndex = li;
-      state.selection.entryIndex = -1;
-      render();
-      editList(li);
-      return;
-    }
-
-    const entry = e.target.closest(".entry");
-    if (!entry) return;
-    const sec = entry.closest(".list");
-    const li = [...board.querySelectorAll(".list")].indexOf(sec);
-    const ei = [...sec.querySelectorAll(".entry")].indexOf(entry);
-    if (li < 0 || ei < 0) return; // stale node from a re-render — ignore
-    state.selection.listIndex = li; state.selection.entryIndex = ei;
-    render();
-    const fresh = board.querySelectorAll(".list")[li].querySelectorAll(".entry")[ei];
-    editEntry(li, ei, false, caretOffsetFromPoint(e.clientX, e.clientY, fresh));
-  });
 
   let touchStart = null;
   board.addEventListener("touchstart", (e) => {
@@ -1635,38 +1423,26 @@ function setupTouch() {
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
     touchStart = null;
-    // Single-list view: swipe cycles lists. Plan switching on mobile is
-    // deliberate-only, via the plan-name button → palette.
-    if (body.dataset.view !== "single") return;
-    // While editing an entry, selecting text drags the finger across the field —
-    // don't read that as a list-switch swipe.
-    if (body.dataset.mode === "insert") return;
+    // Single-list view: swipe cycles lists. Not while editing: selecting text
+    // drags the finger across the field, which isn't a list-switch swipe.
+    if (body.dataset.view !== "single" || body.dataset.mode === "insert") return;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) move(dx < 0 ? 1 : -1, 0);
   });
 
-  // Chrome buttons fire on pointerdown so they respond the instant they're
-  // pressed instead of waiting for the synthetic click on release. preventDefault
-  // keeps the press from also producing a delayed click that would fire twice.
-  const onPress = (el, fn) => el.addEventListener("pointerdown", (e) => { e.preventDefault(); fn(e); });
-
-  onPress($("nav-toggle"), () => body.classList.toggle("nav-open"));
-
-  onPress($("actions"), (e) => {
-    const act = e.target.dataset.act;
-    if (!act) return;
-    ({
-      "del-plan": deleteCurrentPlan,
-      "new-list": newList,
-      "del-list": deleteCurrentList,
-      "toggle-todo": toggleTodo
-    })[act]?.();
-  });
-  onPress($("m-palette"), openPalette);
-  onPress($("m-view"), toggleView);
+  // Chrome buttons fire on press, not on the synthetic click on release.
+  fastTap($("nav-toggle"), () => body.classList.toggle("nav-open"));
+  fastTap($("actions"), (e) => ({
+    "del-plan": deleteCurrentPlan,
+    "new-list": newList,
+    "del-list": deleteCurrentList,
+    "toggle-todo": toggleTodo
+  })[e.target.dataset.act]?.());
+  fastTap($("m-palette"), openPalette);
+  fastTap($("m-view"), toggleView);
 }
 
 // Backdrop click closes a dialog (mobile expectation).
-["palette", "new-plan", "confirm", "bg"].forEach((id) => attachBackdropClose($(id)));
+["palette", "confirm", "bg"].forEach((id) => attachBackdropClose($(id)));
 
 // The preview fills the viewport, so its "backdrop" is everything that isn't
 // the picture or the action bar — attachBackdropClose's `target === dialog`
@@ -1698,7 +1474,6 @@ function loadTurnstile() {
   turnstileLoaded = true;
   const s = document.createElement("script");
   s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
-  s.async = true; s.defer = true;
   document.head.appendChild(s);
 }
 

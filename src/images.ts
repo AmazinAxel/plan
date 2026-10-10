@@ -8,7 +8,7 @@ import type { Data } from "./plan-store";
 //
 // The blob itself only ever stores the uuid — it is re-PUT in full on every
 // save, so bytes can never go in it.
-export const IMG_PREFIX = "img:";
+const IMG_PREFIX = "img:";
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const ALLOWED_TYPES = new Set([
   "image/webp", "image/png", "image/jpeg", "image/gif", "image/avif",
