@@ -7,15 +7,10 @@ const state = {
   selection: { listIndex: 0, entryIndex: -1 },
   isTouch: matchMedia("(hover: none) and (pointer: coarse)").matches
     || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
-  // Mobile: the first entry made after arriving at a list saves-and-stops
-  // (keyboard hides); every entry made after that chains. Reset when the
-  // viewed list changes (see render()).
-  firstEntryMade: false,
   // Desktop: Enter on a freshly added entry saves-and-stops until the chain is
   // armed, which that same commit does — so the next Enter, and every one after
   // it, also opens the following entry. Disarmed by anything else (see keydown).
   chainArmed: false,
-  viewedListId: null,
   // The most recent list index that was actually selected (>= 0). Used to fall
   // back to a sensible list when nothing is selected (delete-list / toggle-view).
   lastListIndex: 0
@@ -152,12 +147,6 @@ function render() {
   // Remember the last genuinely-selected list so we can fall back to it when the
   // selection is cleared (delete-list with nothing active, toggle-view, etc.).
   if (state.selection.listIndex >= 0) state.lastListIndex = state.selection.listIndex;
-
-  // Whenever the viewed list changes, the next entry made is again a "first"
-  // one that saves-and-stops on mobile (see editEntry).
-  const viewedId = list?.id ?? null;
-  if (viewedId !== state.viewedListId) { state.viewedListId = viewedId; state.firstEntryMade = false; }
-
   // Preserve per-list scroll positions across the rebuild.
   const scrolls = {};
   board.querySelectorAll(".entries").forEach((ul) => { scrolls[ul.dataset.listId] = ul.scrollTop; });
@@ -494,8 +483,6 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
     // the content. Splicing it would destroy the image along with it.
     else if (entry.image) entry.text = "";
     else list.entries.splice(entryIndex, 1);
-    // Mobile: once a new entry has been saved in this list, later entries chain.
-    if (isNew && v) state.firstEntryMade = true;
     save();
     setMode("normal"); render();
     // Keep the chain alive across spawned entries so the new-list flow keeps
@@ -513,15 +500,10 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
       e.preventDefault();
       // Desktop: only new entries chain, and only once the chain is armed — the
       // first Enter-committed entry in a burst saves-and-stops, every one after
-      // that chains. Mobile: a new entry chains only after the first one has been
-      // made (the first saves-and-stops); editing an existing entry chains only
-      // when left unmodified — Enter after an edit just commits, but Enter on an
-      // untouched entry adds a new one.
-      const modified = undash(input.value.trim()) !== entry.text;
-      // The new-list flow (chainable) always keeps going on Enter; only tapping
-      // outside — a blur with no Enter — ends it. Otherwise fall back to the
-      // per-platform rule.
-      chain = chainable ? true : (state.isTouch ? (isNew ? state.firstEntryMade : !modified) : (isNew && state.chainArmed));
+      // that chains. Mobile: Enter always opens the next entry so the keyboard
+      // stays up; Enter on a blank field or tapping outside ends the run. The
+      // new-list flow (chainable) always keeps going on either platform.
+      chain = chainable || state.isTouch || (isNew && state.chainArmed);
       armsChain = !chainable && !state.isTouch && isNew && !state.chainArmed;
       input.blur();
     }
