@@ -6,7 +6,7 @@ const state = {
   data: { activePlanId: "", plans: [] },
   selection: { listIndex: 0, entryIndex: -1 },
   isTouch: matchMedia("(hover: none) and (pointer: coarse)").matches
-    || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+    || /Mobi|Android/i.test(navigator.userAgent),
   // Desktop: Enter on a freshly added entry saves-and-stops until the chain is
   // armed, which that same commit does — so the next Enter, and every one after
   // it, also opens the following entry. Disarmed by anything else (see keydown).
@@ -462,13 +462,7 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   syncSep();
   input.focus();
   const caret = caretPos ?? input.value.length;
-  const applyCaret = () => input.setSelectionRange(caret, caret);
-  applyCaret();
-  // iOS WebKit parks the caret at the focus position (end of text) and won't
-  // repaint it for a programmatic mid-text selection until the next interaction —
-  // so the caret stayed invisible until you typed. Re-applying the selection on
-  // the next frame forces WebKit to draw it at the tapped spot right away.
-  requestAnimationFrame(applyCaret);
+  input.setSelectionRange(caret, caret);
   const stopKeep = keepFocusOnTabSwitch(input);
   let cancelled = false;
   let chain = false;
@@ -1543,11 +1537,16 @@ function applyRemote(remote) {
 
 // Re-fetch on focus/visibility so another device's edits show up. Skipped while
 // editing or with an unsaved change, to avoid stomping in-progress work.
+// Returning to the tab fires both focus and visibilitychange; `refreshing`
+// folds them into one fetch.
+let refreshing = false;
 async function refresh() {
-  if (!state.data.plans.length) return; // not booted yet
+  if (refreshing || !state.data.plans.length) return; // in flight / not booted yet
   if (savePending || uploads > 0 || body.dataset.mode === "insert") return;
   let res;
+  refreshing = true;
   try { res = await fetch("/api/data", { cache: "no-store" }); } catch { return; }
+  finally { refreshing = false; }
   if (res.status === 401) { showAuth(refresh); return; }
   if (!res.ok) return;
   const remote = await res.json();

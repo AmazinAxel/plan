@@ -169,7 +169,6 @@ function harden(res: Response, path: string): Response {
   h.set("X-Content-Type-Options", "nosniff");
   h.set("Referrer-Policy", "no-referrer");
   h.set("Strict-Transport-Security", "max-age=31536000");
-  h.set("X-Frame-Options", "DENY");
   if (path.startsWith("/api/") && !h.has("Cache-Control")) h.set("Cache-Control", "no-store");
   return out;
 }
@@ -181,6 +180,24 @@ const escapeAttr = (s: string) =>
 // cached forever: a deploy changes the version, and with it the URL.
 const VERSIONED_ASSETS = new Set(["/styles.css", "/app.js"]);
 
+// Assets only change with a deploy, and a deploy starts fresh isolates, so the
+// page shell and the asset versions are read once per isolate instead of on
+// every page load. Not kept if a version came back empty, so a failed HEAD is
+// retried next load rather than pinning unversioned URLs.
+let shell: Promise<{ html: string; cssV: string; jsV: string }> | null = null;
+function loadShell(req: Request, env: Env) {
+  // Plain requests: a forwarded If-None-Match could hand back a bodiless 304.
+  const plain = (p: string, method = "GET") => env.ASSETS.fetch(new Request(new URL(p, req.url), { method }));
+  const version = (p: string) =>
+    plain(p, "HEAD").then((r) => (r.headers.get("ETag") || "").replace(/^W\/|"/g, ""));
+  return (shell ??= Promise.all([plain("/").then((r) => r.text()), version("/styles.css"), version("/app.js")])
+    .then(([html, cssV, jsV]) => {
+      if (!cssV || !jsV) shell = null;
+      return { html, cssV, jsV };
+    })
+    .catch((e) => { shell = null; throw e; }));
+}
+
 // The page is assembled here rather than served as a static asset so the first
 // paint needs no API round-trip: the data blob (when authed) is inlined, and
 // styles.css/app.js are linked under content-versioned URLs that the browser
@@ -189,17 +206,13 @@ const VERSIONED_ASSETS = new Set(["/styles.css", "/app.js"]);
 // board hidden until it has rendered from that data, so the first painted frame
 // is the final one.
 async function servePage(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  // Plain requests: a forwarded If-None-Match could hand back a bodiless 304.
-  const plain = (p: string, method = "GET") => env.ASSETS.fetch(new Request(new URL(p, req.url), { method }));
-  const version = (p: string) =>
-    plain(p, "HEAD").then((r) => (r.headers.get("ETag") || "").replace(/^W\/|"/g, ""));
   // With a session cookie present, the data read is started alongside the
   // secret read rather than after the auth check, so the page waits on one KV
   // round-trip, not two. Without one, KV isn't touched at all. A failed read
   // yields `undefined`, which the client answers by fetching /api/data itself.
   const session = hasSessionCookie(req);
-  const [html, cssV, jsV, secret, read] = await Promise.all([
-    plain("/").then((r) => r.text()), version("/styles.css"), version("/app.js"),
+  const [{ html, cssV, jsV }, secret, read] = await Promise.all([
+    loadShell(req, env),
     session ? getSecret(env) : null,
     session ? getData(env.PLAN_KV).catch(() => undefined) : undefined,
   ]);
@@ -254,8 +267,7 @@ async function servePage(req: Request, env: Env, ctx: ExecutionContext): Promise
   return new Response(res.body, { headers });
 }
 
-async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const url = new URL(req.url);
+async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
   const path = url.pathname;
 
   if (path === "/" && (req.method === "GET" || req.method === "HEAD")) return servePage(req, env, ctx);
@@ -320,6 +332,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return harden(await route(req, env, ctx), new URL(req.url).pathname);
+    const url = new URL(req.url);
+    return harden(await route(req, env, ctx, url), url.pathname);
   },
 };

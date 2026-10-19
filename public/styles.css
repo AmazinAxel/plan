@@ -21,24 +21,18 @@
 
   /* Snow Storm */
   --lightest1: #eceff4;
-  --lightest2: #e5e9f0;
   --lightest3: #d8dee9;
 
   /* Aurora */
   --red: #bf616a;
-  --orange: #d08770;
-  --yellow: #ebcb8b;
-  --green: #a3be8c;
-  --purple: #b48ead;
 
   /* Frost */
-  --blue1: #b5d2d9;
   --blue2: #81a1c1;
   --blue3: #5e81ac;
 
   /* Fonts */
-  --headerFont: 'Hammersmith One', Roboto, Helvetica, Arial, sans-serif;
-  --primaryFont: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+  --headerFont: 'Hammersmith One', Roboto, sans-serif;
+  --primaryFont: 'Sora', Roboto, sans-serif;
   --ease: cubic-bezier(0, 0.6, 0.3, 1);
 
   /* semantic */
@@ -226,14 +220,12 @@ body.dragging-scroll .entries {
   /* Long-press to drag a list would otherwise select the name text on touch. */
   user-select: none;
   -webkit-user-select: none;
-  -webkit-touch-callout: none;
 }
 
 .list-name input {
   width: 100%;
   user-select: text;
   -webkit-user-select: text;
-  -webkit-touch-callout: default;
 }
 
 .list-name:empty::after {
@@ -261,7 +253,6 @@ body.dragging-scroll .entries {
      selection is re-enabled on the edit input/textarea below. */
   user-select: none;
   -webkit-user-select: none;
-  -webkit-touch-callout: none;
 }
 
 .entry+.entry {
@@ -327,7 +318,6 @@ body[data-mode="insert"] .entry[data-selected][data-todo] {
      inherited, so the .entry rule above would otherwise disable it here too). */
   user-select: text;
   -webkit-user-select: text;
-  -webkit-touch-callout: default;
 }
 
 /* An entry's image: never wider than the list, never taller than a fraction of
@@ -472,35 +462,21 @@ body.touch {
 }
 
 /* Buttons and tappable list items act on pointerdown (see setupTouch/fastTap),
-   so suppress the browser's own delayed tap-highlight flash and any
-   double-tap-zoom wait — the handler is the feedback now, and it fires the
-   instant the element is pressed. */
+   so skip any double-tap-zoom wait — the handler is the feedback now, and it
+   fires the instant the element is pressed. */
 body.touch button,
 body.touch #palette-list li {
-  -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
 
-/* iOS Safari moves focus into the <dialog> when showModal() runs and paints a
-   blue focus/selection ring around it; desktop doesn't. Kill that ring (and the
-   tap-highlight) so opening a modal shows no stray outline. */
-dialog:focus,
-dialog:focus-visible {
-  outline: none;
-}
-
-/* Safari still draws a text/box selection highlight around the modal's own
-   content on tap even with the focus ring gone, so make the dialog chrome
+/* A long-press would select the modal's own chrome text, so make the chrome
    unselectable — only the actual text fields stay selectable. */
 body.touch dialog {
-  -webkit-tap-highlight-color: transparent;
-  -webkit-user-select: none;
   user-select: none;
 }
 
 body.touch dialog input,
 body.touch dialog textarea {
-  -webkit-user-select: text;
   user-select: text;
 }
 
