@@ -198,22 +198,38 @@ function render() {
   showBackground(plan.background);
 }
 
-// The old background goes with the old board; the new one is decoded off-DOM
-// and only then inserted, so its fade-in (the .bg animation) never runs over
-// pixels that aren't there yet.
-let shownBg, bgImg;
+// Crossfade: the new background is decoded off-DOM, then inserted above the old
+// one, which is only removed once the new one's fade-in (the .bg animation) has
+// finished. Removing the old one up front leaves a bare frame or two before the
+// fade starts, which reads as a flicker.
+let shownBg, bgImg, bgPending;
 function showBackground(bg) {
   if (bg === shownBg) return;
   shownBg = bg;
-  bgImg?.remove();
-  bgImg = null;
-  if (!bg) return;
+  bgPending = null;
+  if (!bg) return fadeOutBackground();
   const img = document.createElement("img");
   img.className = "bg";
   img.alt = "";
   img.src = bg;
-  bgImg = img;
-  img.decode().then(() => { if (bgImg === img) body.prepend(img); }, () => {});
+  bgPending = img;
+  img.decode().then(() => {
+    if (bgPending !== img) return;
+    bgPending = null;
+    const old = bgImg;
+    bgImg = img;
+    if (!old) return body.prepend(img);
+    old.after(img);
+    img.addEventListener("animationend", () => old.remove(), { once: true });
+  }, () => { if (bgPending === img) fadeOutBackground(); });
+}
+
+function fadeOutBackground() {
+  const old = bgImg;
+  bgImg = null;
+  if (!old) return;
+  old.classList.add("out");
+  old.addEventListener("animationend", () => old.remove(), { once: true });
 }
 
 function renderDots(plan) {

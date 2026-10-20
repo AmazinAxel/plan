@@ -86,8 +86,16 @@ body {
   animation: bg-in 0.3s var(--ease) both;
 }
 
+.bg.out {
+  animation-name: bg-out;
+}
+
 @keyframes bg-in {
   from { opacity: 0; }
+}
+
+@keyframes bg-out {
+  to { opacity: 0; }
 }
 
 input,
