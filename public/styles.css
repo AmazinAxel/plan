@@ -83,6 +83,10 @@ body {
   object-fit: cover;
   z-index: -1;
   pointer-events: none;
+  /* Keeps the image on its own compositor layer after the fade. Otherwise it is
+     demoted and re-rastered when the animation ends, with different resampling,
+     which shows as a one-frame flicker. */
+  will-change: opacity;
   animation: bg-in 0.3s var(--ease) both;
 }
 
