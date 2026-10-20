@@ -199,17 +199,23 @@ function render() {
 }
 
 // Fades the background in once its bytes are decoded, rather than letting it
-// pop in whenever the network gets round to it.
+// pop in whenever the network gets round to it. One already decoded swaps in
+// place with the rest of the board — dropping it to nothing and fading it back
+// is the flicker this avoids.
+const bgReady = new Set();
 let shownBg;
 function showBackground(bg) {
   if (bg === shownBg) return;
   shownBg = bg;
-  body.classList.remove("bg-in");
   body.style.setProperty("--bg-image", bg ? `url("${bg.replace(/"/g, "%22")}")` : "none");
-  if (!bg) return;
+  body.classList.toggle("bg-in", bgReady.has(bg));
+  if (!bg || bgReady.has(bg)) return;
   const img = new Image();
   img.src = bg;
-  img.decode().catch(() => {}).then(() => { if (shownBg === bg) body.classList.add("bg-in"); });
+  img.decode().catch(() => {}).then(() => {
+    bgReady.add(bg);
+    if (shownBg === bg) body.classList.add("bg-in");
+  });
 }
 
 function renderDots(plan) {

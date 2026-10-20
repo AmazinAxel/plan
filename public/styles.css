@@ -82,11 +82,14 @@ body::before {
   z-index: -1;
   background: var(--bg-image, none) center / cover;
   opacity: 0;
+  /* Stays composited, so the layer isn't re-rastered (a visible blink) as the
+     fade starts or ends. */
+  will-change: opacity;
 }
 
 body.bg-in::before {
   opacity: 1;
-  transition: opacity 0.5s var(--ease);
+  transition: opacity 0.3s var(--ease);
 }
 
 input,
