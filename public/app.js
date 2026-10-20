@@ -209,13 +209,20 @@ let shownBg;
 function bgImg(url) {
   if (!bgImgs.has(url)) {
     // sync: WebKit otherwise paints a blank frame while it decodes at paint time.
-    bgImgs.set(url, Object.assign(document.createElement("img"), { className: "bg", alt: "", decoding: "sync", src: url }));
+    const img = Object.assign(document.createElement("img"), { className: "bg", alt: "", decoding: "sync", src: url });
+    // Settles once loaded, and decoded where the browser manages it (WebKit's
+    // decode() can reject an image that loaded fine). A failed one is dropped so
+    // the next visit retries.
+    img.ready = new Promise((r) => { img.onload = img.onerror = r; })
+      .then(() => img.decode()).catch(() => {})
+      .then(() => { if (!img.naturalWidth) bgImgs.delete(url); });
+    bgImgs.set(url, img);
   }
   return bgImgs.get(url);
 }
 
 function preloadBackgrounds() {
-  for (const p of state.data.plans) if (p.background) bgImg(p.background).decode().catch(() => {});
+  for (const p of state.data.plans) if (p.background) bgImg(p.background);
 }
 
 function showBackground(bg) {
@@ -224,13 +231,13 @@ function showBackground(bg) {
   document.querySelectorAll(".bg").forEach((el) => el.remove());
   if (!bg) return;
   const img = bgImg(bg);
-  if (img.complete) return void body.prepend(img);
-  img.decode().then(() => {
-    if (shownBg !== bg) return;
+  if (img.complete && img.naturalWidth) return void body.prepend(img);
+  img.ready.then(() => {
+    if (shownBg !== bg || !img.naturalWidth || img.isConnected) return;
     const cover = Object.assign(document.createElement("div"), { className: "bg out" });
     cover.addEventListener("animationend", () => cover.remove(), { once: true });
     body.prepend(img, cover);
-  }, () => {});
+  });
 }
 
 function renderDots(plan) {
