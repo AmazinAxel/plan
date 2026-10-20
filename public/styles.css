@@ -90,8 +90,11 @@ body {
   animation: bg-out 0.3s var(--ease) forwards;
 }
 
+/* background-color, not opacity: WebKit composites an opacity animation onto its
+   own layer, and tearing that down when it ends paints a blank frame. A color
+   animation is plain repaints, so no layer ever comes or goes. */
 @keyframes bg-out {
-  to { opacity: 0; }
+  to { background-color: transparent; }
 }
 
 input,

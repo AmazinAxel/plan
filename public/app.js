@@ -200,7 +200,8 @@ function render() {
 
 // A plan change drops the old background at once. A loaded one goes straight in;
 // one still loading appears, once decoded, under a plain cover that fades out.
-// Only the cover animates: fading the image itself flickered in WebKit. One <img>
+// Only the cover animates (its color; see .bg.out): fading the image itself
+// flickered in WebKit. One <img>
 // per URL is kept for the session, and preloadBackgrounds() fills it, so
 // switching plans is normally instant.
 const bgImgs = new Map();
