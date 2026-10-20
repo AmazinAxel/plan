@@ -72,11 +72,11 @@ body {
   overflow: hidden;
 }
 
-/* A plan's background image, or the plain cover over a first one (see
-   swapBackground()). Only an outgoing layer animates: it fades out over the new
-   one and is removed. */
+/* A plan's background image, or the cover fading out over it (see
+   showBackground()). Absolute, not fixed: WebKit gives fixed elements their own
+   compositing layer, and each layer change risks a blank frame. */
 .bg {
-  position: fixed;
+  position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;

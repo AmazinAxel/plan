@@ -198,34 +198,39 @@ function render() {
   showBackground(plan.background);
 }
 
-// The new background is decoded off-DOM, so it is never shown half-loaded.
-let shownBg, bgImg, bgPending;
+// A plan change drops the old background at once. A loaded one goes straight in;
+// one still loading appears, once decoded, under a plain cover that fades out.
+// Only the cover animates: fading the image itself flickered in WebKit. One <img>
+// per URL is kept for the session, and preloadBackgrounds() fills it, so
+// switching plans is normally instant.
+const bgImgs = new Map();
+let shownBg;
+
+function bgImg(url) {
+  if (!bgImgs.has(url)) {
+    // sync: WebKit otherwise paints a blank frame while it decodes at paint time.
+    bgImgs.set(url, Object.assign(document.createElement("img"), { className: "bg", alt: "", decoding: "sync", src: url }));
+  }
+  return bgImgs.get(url);
+}
+
+function preloadBackgrounds() {
+  for (const p of state.data.plans) if (p.background) bgImg(p.background).decode().catch(() => {});
+}
+
 function showBackground(bg) {
   if (bg === shownBg) return;
   shownBg = bg;
-  bgPending = null;
-  if (!bg) return swapBackground(null);
-  const img = document.createElement("img");
-  img.className = "bg";
-  img.alt = "";
-  img.src = bg;
-  bgPending = img;
-  const settle = (ok) => { if (bgPending === img) { bgPending = null; swapBackground(ok ? img : null); } };
-  img.decode().then(() => settle(true), () => settle(false));
-}
-
-// The incoming background goes in underneath, static; what it replaces — the old
-// image, or a plain cover when there was none — fades out above it and is
-// removed. Only the outgoing layer ever animates, so nothing on screen changes
-// when the animation ends (fading the new one in flickered as it finished).
-function swapBackground(img) {
-  const old = bgImg || (img && document.createElement("div"));
-  bgImg = img;
-  if (!old) return;
-  if (!old.isConnected) { old.className = "bg"; body.prepend(old); }
-  if (img) old.before(img);
-  old.classList.add("out");
-  old.addEventListener("animationend", () => old.remove(), { once: true });
+  document.querySelectorAll(".bg").forEach((el) => el.remove());
+  if (!bg) return;
+  const img = bgImg(bg);
+  if (img.complete) return void body.prepend(img);
+  img.decode().then(() => {
+    if (shownBg !== bg) return;
+    const cover = Object.assign(document.createElement("div"), { className: "bg out" });
+    cover.addEventListener("animationend", () => cover.remove(), { once: true });
+    body.prepend(img, cover);
+  }, () => {});
 }
 
 function renderDots(plan) {
@@ -1553,6 +1558,7 @@ async function loadData() {
   render();
   await reveal();
   board.focus();
+  preloadBackgrounds();
 }
 
 // ---------- cross-device sync ----------
