@@ -198,36 +198,32 @@ function render() {
   showBackground(plan.background);
 }
 
-// Crossfade: the new background is decoded off-DOM, then inserted above the old
-// one, which is only removed once the new one's fade-in (the .bg animation) has
-// finished. Removing the old one up front leaves a bare frame or two before the
-// fade starts, which reads as a flicker.
+// The new background is decoded off-DOM, so it is never shown half-loaded.
 let shownBg, bgImg, bgPending;
 function showBackground(bg) {
   if (bg === shownBg) return;
   shownBg = bg;
   bgPending = null;
-  if (!bg) return fadeOutBackground();
+  if (!bg) return swapBackground(null);
   const img = document.createElement("img");
   img.className = "bg";
   img.alt = "";
   img.src = bg;
   bgPending = img;
-  img.decode().then(() => {
-    if (bgPending !== img) return;
-    bgPending = null;
-    const old = bgImg;
-    bgImg = img;
-    if (!old) return body.prepend(img);
-    old.after(img);
-    img.addEventListener("animationend", () => old.remove(), { once: true });
-  }, () => { if (bgPending === img) fadeOutBackground(); });
+  const settle = (ok) => { if (bgPending === img) { bgPending = null; swapBackground(ok ? img : null); } };
+  img.decode().then(() => settle(true), () => settle(false));
 }
 
-function fadeOutBackground() {
-  const old = bgImg;
-  bgImg = null;
+// The incoming background goes in underneath, static; what it replaces — the old
+// image, or a plain cover when there was none — fades out above it and is
+// removed. Only the outgoing layer ever animates, so nothing on screen changes
+// when the animation ends (fading the new one in flickered as it finished).
+function swapBackground(img) {
+  const old = bgImg || (img && document.createElement("div"));
+  bgImg = img;
   if (!old) return;
+  if (!old.isConnected) { old.className = "bg"; body.prepend(old); }
+  if (img) old.before(img);
   old.classList.add("out");
   old.addEventListener("animationend", () => old.remove(), { once: true });
 }

@@ -72,9 +72,9 @@ body {
   overflow: hidden;
 }
 
-/* A plan's background image (see showBackground()). Inserted only once decoded,
-   and an animation (unlike a transition) runs on every insertion, so it fades in
-   on every plan switch regardless of frame timing. */
+/* A plan's background image, or the plain cover over a first one (see
+   swapBackground()). Only an outgoing layer animates: it fades out over the new
+   one and is removed. */
 .bg {
   position: fixed;
   inset: 0;
@@ -83,19 +83,11 @@ body {
   object-fit: cover;
   z-index: -1;
   pointer-events: none;
-  /* Keeps the image on its own compositor layer after the fade. Otherwise it is
-     demoted and re-rastered when the animation ends, with different resampling,
-     which shows as a one-frame flicker. */
-  will-change: opacity;
-  animation: bg-in 0.3s var(--ease) both;
+  background: var(--bg);
 }
 
 .bg.out {
-  animation-name: bg-out;
-}
-
-@keyframes bg-in {
-  from { opacity: 0; }
+  animation: bg-out 0.3s var(--ease) forwards;
 }
 
 @keyframes bg-out {
