@@ -198,24 +198,22 @@ function render() {
   showBackground(plan.background);
 }
 
-// Fades the background in once its bytes are decoded, rather than letting it
-// pop in whenever the network gets round to it. One already decoded swaps in
-// place with the rest of the board — dropping it to nothing and fading it back
-// is the flicker this avoids.
-const bgReady = new Set();
-let shownBg;
+// The old background goes with the old board; the new one is decoded off-DOM
+// and only then inserted, so its fade-in (the .bg animation) never runs over
+// pixels that aren't there yet.
+let shownBg, bgImg;
 function showBackground(bg) {
   if (bg === shownBg) return;
   shownBg = bg;
-  body.style.setProperty("--bg-image", bg ? `url("${bg.replace(/"/g, "%22")}")` : "none");
-  body.classList.toggle("bg-in", bgReady.has(bg));
-  if (!bg || bgReady.has(bg)) return;
-  const img = new Image();
+  bgImg?.remove();
+  bgImg = null;
+  if (!bg) return;
+  const img = document.createElement("img");
+  img.className = "bg";
+  img.alt = "";
   img.src = bg;
-  img.decode().catch(() => {}).then(() => {
-    bgReady.add(bg);
-    if (shownBg === bg) body.classList.add("bg-in");
-  });
+  bgImg = img;
+  img.decode().then(() => { if (bgImg === img) body.prepend(img); }, () => {});
 }
 
 function renderDots(plan) {

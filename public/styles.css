@@ -60,7 +60,7 @@ body {
 /* Laid out but unpainted until app.js has rendered and fonts/unsized images are in
    (see reveal()), so nothing on screen shifts after the first frame. The body's
    background still paints, so there is no white flash either. */
-body:not(.ready) > * {
+body:not(.ready) > :not(.bg) {
   visibility: hidden;
 }
 
@@ -72,24 +72,22 @@ body {
   overflow: hidden;
 }
 
-/* A plan's background image (see showBackground()). On its own layer so it can
-   fade in once decoded instead of popping in late on a slow connection; hidden
-   instantly when the image changes so the old one never cross-fades. */
-body::before {
-  content: "";
+/* A plan's background image (see showBackground()). Inserted only once decoded,
+   and an animation (unlike a transition) runs on every insertion, so it fades in
+   on every plan switch regardless of frame timing. */
+.bg {
   position: fixed;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   z-index: -1;
-  background: var(--bg-image, none) center / cover;
-  opacity: 0;
-  /* Stays composited, so the layer isn't re-rastered (a visible blink) as the
-     fade starts or ends. */
-  will-change: opacity;
+  pointer-events: none;
+  animation: bg-in 0.3s var(--ease) both;
 }
 
-body.bg-in::before {
-  opacity: 1;
-  transition: opacity 0.3s var(--ease);
+@keyframes bg-in {
+  from { opacity: 0; }
 }
 
 input,
