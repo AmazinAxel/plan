@@ -195,8 +195,21 @@ function render() {
   $("m-plan-name").textContent = plan.name || "—";
   $("m-del-plan").hidden = plan.name === "Plan";
   document.title = !plan.name ? "plan" : plan.name === "Plan" ? "Plan" : `${plan.name} plan`;
-  const bg = plan.background;
-  body.style.backgroundImage = bg ? `url("${bg.replace(/"/g, "%22")}")` : "";
+  showBackground(plan.background);
+}
+
+// Fades the background in once its bytes are decoded, rather than letting it
+// pop in whenever the network gets round to it.
+let shownBg;
+function showBackground(bg) {
+  if (bg === shownBg) return;
+  shownBg = bg;
+  body.classList.remove("bg-in");
+  body.style.setProperty("--bg-image", bg ? `url("${bg.replace(/"/g, "%22")}")` : "none");
+  if (!bg) return;
+  const img = new Image();
+  img.src = bg;
+  img.decode().catch(() => {}).then(() => { if (shownBg === bg) body.classList.add("bg-in"); });
 }
 
 function renderDots(plan) {

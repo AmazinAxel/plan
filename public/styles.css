@@ -70,9 +70,23 @@ body {
   font-family: var(--primaryFont);
   font-size: 21px;
   overflow: hidden;
-  /* A plan's background image, when set (see render()). */
-  background-size: cover;
-  background-position: center;
+}
+
+/* A plan's background image (see showBackground()). On its own layer so it can
+   fade in once decoded instead of popping in late on a slow connection; hidden
+   instantly when the image changes so the old one never cross-fades. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg-image, none) center / cover;
+  opacity: 0;
+}
+
+body.bg-in::before {
+  opacity: 1;
+  transition: opacity 0.5s var(--ease);
 }
 
 input,
