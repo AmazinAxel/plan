@@ -18,6 +18,9 @@ const BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep destructive-action backup
 export function openDb(path: string): Database {
   const db = new Database(path, { create: true });
   db.run("PRAGMA journal_mode = WAL");
+  // fsync at checkpoints only, not every commit: far less I/O on a USB drive.
+  // A power cut can lose the last few saves but never corrupts the file.
+  db.run("PRAGMA synchronous = NORMAL");
   db.run("PRAGMA busy_timeout = 5000");
   db.run("CREATE TABLE IF NOT EXISTS data (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)");
   db.run("CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, ct TEXT NOT NULL, at INTEGER NOT NULL, bytes BLOB NOT NULL)");
@@ -56,12 +59,21 @@ function seed(): Data {
   return { activePlanId: id, plans: [{ id, name: "Plan", lists: [] }], version: 1 };
 }
 
+// This process is the only writer, so the blob is read from disk once and
+// served from memory after that. Edit the database by hand only with the
+// service stopped.
+let cache: Data | null = null;
+
+// For a write that rolled back after putData had already cached it.
+export const dropCache = () => { cache = null; };
+
 export function getData(db: Database): Data {
+  if (cache) return cache;
   const row = db.query<{ json: string }, []>("SELECT json FROM data WHERE id = 1").get();
   const stored = row ? (JSON.parse(row.json) as Data) : null;
   if (stored && Array.isArray(stored.plans) && stored.plans.length > 0) {
     if (typeof stored.version !== "number") stored.version = 1; // migrate pre-versioning blobs
-    return stored;
+    return (cache = stored);
   }
   const fresh = seed();
   putData(db, fresh);
@@ -72,4 +84,5 @@ export function putData(db: Database, data: Data): void {
   if (!data || !Array.isArray(data.plans)) throw new Error("invalid data");
   if (!data.plans.some(p => p.name === "Plan")) throw new Error("default plan 'Plan' is required");
   db.query("INSERT OR REPLACE INTO data (id, json) VALUES (1, ?)").run(JSON.stringify(data));
+  cache = data;
 }

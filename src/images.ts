@@ -28,7 +28,7 @@ export const isImageId = (id: string): boolean => UUID_RE.test(id);
 // delete an image whose reference was merely in transit, which is unrecoverable
 // and exactly the failure this whole design exists to prevent.
 const SWEEP_GRACE_MS = 24 * 60 * 60 * 1000;
-export const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+export const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 // How long after upload a client may still disown its own image (see the DELETE
 // route). Long enough for a slow upload to finish and be abandoned, short

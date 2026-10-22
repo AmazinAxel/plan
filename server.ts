@@ -1,19 +1,17 @@
 // The whole backend: a Bun HTTP server over one SQLite file. Meant to sit
-// behind `tailscale serve` (see nix/module.nix), which terminates HTTPS and
-// limits access to the tailnet, so there is no auth here at all — bind it to
-// anything but localhost and anyone who can reach the port has the data.
+// behind `tailscale serve`, which terminates HTTPS and limits access to the
+// tailnet, so there is no auth here at all — bind it to anything but localhost
+// and anyone who can reach the port has the data.
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getData, putData, isDestructive, backupData, openDb, type Data } from "./src/plan-store";
+import { getData, putData, isDestructive, backupData, openDb, dropCache, type Data } from "./src/plan-store";
 import {
   ALLOWED_TYPES, DISOWN_WINDOW_MS, MAX_IMAGE_BYTES, SWEEP_INTERVAL_MS, deleteImage, getImage,
   imageMeta, imageRefs, isImageId, putImage, reconcile, sweep,
 } from "./src/images";
 
-const PORT = Number(process.env.PORT || 8787);
-const HOST = process.env.HOST || "127.0.0.1";
 const DATA_DIR = resolve(process.env.PLAN_DATA_DIR || "data");
-const DIST = resolve(process.env.PLAN_DIST || join(import.meta.dir, "dist"));
+const DIST = join(import.meta.dir, "dist");
 
 mkdirSync(DATA_DIR, { recursive: true });
 const db = openDb(join(DATA_DIR, "plan.db"));
@@ -140,11 +138,20 @@ const cacheControl = (path: string) =>
   : "no-cache";
 
 // dist/ only changes with a new build, which restarts the server, so the shell
-// and the asset versions are read once at startup.
+// is rewritten once at startup — versioned asset URLs set, markers where the
+// per-request parts go — and split there. A page load is then plain string
+// concatenation.
 const version = async (p: string) => Bun.hash(await Bun.file(join(DIST, p)).arrayBuffer()).toString(36);
-const shell = await Bun.file(join(DIST, "index.html")).text();
 const cssUrl = `/styles.css?v=${await version("styles.css")}`;
 const jsUrl = `/app.js?v=${await version("app.js")}`;
+const [beforePreloads, beforeBoot, rest] = (await new HTMLRewriter()
+  .on("head", { element: (el) => { el.append("<!--P-->", { html: true }); } })
+  .on('link[rel="stylesheet"]', { element: (el) => { el.setAttribute("href", cssUrl); } })
+  .on('script[type="module"]', {
+    element: (el) => { el.setAttribute("src", jsUrl); el.before("<!--B-->", { html: true }); },
+  })
+  .transform(new Response(Bun.file(join(DIST, "index.html"))))
+  .text()).split(/<!--[PB]-->/);
 
 // The page is assembled here rather than served as a static asset so the first
 // paint needs no API round-trip: the data blob is inlined, and styles.css/app.js
@@ -175,23 +182,11 @@ function servePage(): Response {
   const boot = data === undefined ? "" :
     `<script id="boot" type="application/json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
 
-  const res = new HTMLRewriter()
-    .on("head", { element: (el) => { el.append(preloads.join(""), { html: true }); } })
-    .on('link[rel="stylesheet"]', { element: (el) => { el.setAttribute("href", cssUrl); } })
-    .on('script[type="module"]', {
-      element: (el) => { el.setAttribute("src", jsUrl); el.before(boot, { html: true }); },
-    })
-    .transform(new Response(shell));
-  return new Response(res.body, {
+  return new Response(beforePreloads + preloads.join("") + beforeBoot + boot + rest, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
       "Content-Security-Policy": CSP,
-      Link: [
-        `<${cssUrl}>; rel=preload; as=style`,
-        "</fonts/sora-latin.woff2>; rel=preload; as=font; type=font/woff2; crossorigin",
-        "</fonts/hammersmith-one-latin.woff2>; rel=preload; as=font; type=font/woff2; crossorigin",
-      ].join(", "),
     },
   });
 }
@@ -224,6 +219,7 @@ async function route(req: Request, url: URL): Promise<Response> {
       let body: Data;
       try { body = (await req.json()) as Data; } catch { return json({ error: "bad body" }, { status: 400 }); }
       try { return saveData(body, req.headers.get("X-Plan-Version")); } catch (e) {
+        dropCache();
         return json({ error: (e as Error).message }, { status: 400 });
       }
     }
@@ -237,8 +233,8 @@ async function route(req: Request, url: URL): Promise<Response> {
 }
 
 Bun.serve({
-  hostname: HOST,
-  port: PORT,
+  hostname: "127.0.0.1",
+  port: 8787,
   maxRequestBodySize: MAX_IMAGE_BYTES + 1024 * 1024,
   async fetch(req) {
     const url = new URL(req.url);
@@ -249,4 +245,3 @@ Bun.serve({
     return new Response(null, { status: 500 });
   },
 });
-console.log(`plan listening on http://${HOST}:${PORT}, data in ${DATA_DIR}`);

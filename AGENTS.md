@@ -4,9 +4,9 @@
 
 A Bun server (`server.ts`, `Bun.serve`) over one SQLite file (`bun:sqlite`, `<dataDir>/plan.db`: data blob, entry images, backups), serving the static build from `dist/`. No framework and **no runtime dependencies** — only Bun built-ins; `bun install` is for typechecking alone. `build.ts` (run by the Nix build and `bun run dev`) copies `public/` into `dist/`, minifying `app.js`/`styles.css` and stripping HTML comments, so sources stay heavily commented at no network cost. Edit `public/`, never `dist/` (gitignored). The browser loads `public/index.html`, which imports `public/app.js` as a module and loads the vendored `public/Sortable.min.js` `async` (drag attaches once it arrives, so it never delays first paint).
 
-Configured by env: `PORT` (8787), `HOST` (127.0.0.1), `PLAN_DATA_DIR` (`./data`), `PLAN_DIST` (`./dist`). `bun run typecheck` after server changes.
+Listens on `127.0.0.1:8787`; the only setting is `PLAN_DATA_DIR` (default `./data`). The blob is held in memory after the first read (this process is the only writer), so **stop the service before editing `plan.db` by hand**. `bun run typecheck` after server changes.
 
-**Deployment** is the flake: `packages.<system>.default` (`nix/package.nix` — runs `build.ts`, wraps `bun server.ts` as `bin/plan`) and `nixosModules.default` (`nix/module.nix`, `services.plan.{enable,port,dataDir,tailscaleServe}`). The module runs the server as user `plan` on localhost and a oneshot that runs `tailscale serve --bg --https=443`, so the app is reachable only from the tailnet, over HTTPS with a real cert (needed anyway: `crypto.randomUUID` and the clipboard require a secure context). **There is no auth** — tailnet membership is the auth. Never bind it to a public interface.
+**Deployment** is `flake.nix`, which has no inputs and one output, `overlays.default`, providing `pkgs.plan` built with the host's nixpkgs: `dist/` from `build.ts`, and the server bundled by `bun build --minify` into one `server.js`. That file starts its listener on import, so the homelab doesn't run it as its own service: its existing bun webserver does `await import(process.env.PLAN_SERVER)`, saving a second runtime's memory. The two share a process but not a socket — the webserver stays on `:80`, plan on `127.0.0.1:8787` — and a crash in either takes down both. The page shell is rewritten once at startup and split, so serving `/` is string concatenation. HTTPS and tailnet-only access come from `tailscale serve`, run once by hand on the host (`sudo tailscale serve --bg 8787`); tailscaled keeps that setting in its own state. HTTPS is needed anyway: `crypto.randomUUID` and the clipboard require a secure context. **There is no auth** — tailnet membership is the auth. Never bind it to a public interface.
 
 ## Data model
 
@@ -34,7 +34,7 @@ Some client-side care below — `objectUrls`, the strictly-newer checks — guar
 **No orphans, ever.** That invariant is enforced on the server, because every interesting failure (undo, a lost 409, a closed tab mid-upload) is one the client can't be trusted to report:
 
 1. **`reconcile` on every `PUT /api/data`** — deletes `refs(current) \ refs(next)`. Every way an image stops being referenced (detach, entry/list/plan delete, undo, overwriting an entry's image) arrives as one blob replacing another, so the set difference catches all of them. Runs in the same transaction as the write (`saveData` in `server.ts`), so the blob and its image cleanup commit together.
-2. **`sweep` every 10 min** (a timer in `server.ts`, plus once at startup) — the backstop for ids that never reached any blob (upload succeeded, then the tab closed or the save lost a 409), which no diff can see. Skips rows whose `at` is under 24 h old. That grace is deliberately generous: an image is unreferenced from upload until its save lands, a gap that stretches indefinitely if the client goes offline holding a pending write. Collecting a rare abandoned upload a day late costs nothing; collecting one whose reference was merely in transit is unrecoverable.
+2. **`sweep` hourly** (a timer in `server.ts`, plus once at startup) — the backstop for ids that never reached any blob (upload succeeded, then the tab closed or the save lost a 409), which no diff can see. Skips rows whose `at` is under 24 h old. That grace is deliberately generous: an image is unreferenced from upload until its save lands, a gap that stretches indefinitely if the client goes offline holding a pending write. Collecting a rare abandoned upload a day late costs nothing; collecting one whose reference was merely in transit is unrecoverable.
 
 There is deliberately **no "does this id exist?" check before committing a reference**. The client only ever sets a reference after a 201, and `healBrokenImage` handles the genuinely-missing case.
 
@@ -56,11 +56,13 @@ An entry with an image but no text is legal — clearing the field leaves the pi
 
 ## Backups
 
-A write that deletes a plan or list (`isDestructive`) first snapshots the blob it replaces into table `backups` (`at` = ms timestamp), pruned after 7 days. Restore by hand, bumping the version so open clients' next save 409s and adopts it rather than looping:
+A write that deletes a plan or list (`isDestructive`) first snapshots the blob it replaces into table `backups` (`at` = ms timestamp), pruned after 7 days. Restore by hand with the service stopped (it caches the blob), bumping the version so open clients' next save 409s and adopts it rather than looping:
 
 ```sh
+sudo systemctl stop plan
 sqlite3 plan.db "SELECT at, datetime(at/1000,'unixepoch','localtime') FROM backups"
 sqlite3 plan.db "UPDATE data SET json = json_set((SELECT json FROM backups WHERE at = <at>), '\$.version', json_extract(json, '\$.version') + 1)"
+sudo systemctl start plan
 ```
 
 ⚠️ Backups reference images that `reconcile` deletes on that same write. Restoring one will therefore bring back entries whose images are gone; `healBrokenImage` clears those references on first paint. Zero orphans was the explicit requirement and this is its cost.
@@ -81,7 +83,7 @@ sqlite3 plan.db "UPDATE data SET json = json_set((SELECT json FROM backups WHERE
 | GET/HEAD | `/api/img/<id>` | Fetch one image, immutably cached (HEAD = existence probe)                                                                                                  |
 | DELETE   | `/api/img/<id>` | Drop one object; **409 if the live blob references it**                                                                                                     |
 
-`GET /` is assembled by the server (`servePage`, via Bun's `HTMLRewriter`): the data blob is inlined as `<script id="boot" type="application/json">` (absent if the read failed — the client then fetches `/api/data`, retrying every 3s), and `styles.css`/`app.js` are linked as `?v=<content hash>` which the server serves `immutable` (the shell HTML and both hashes are computed once at startup, since only a new build changes them) — repeat loads download nothing and reuse the browser's compiled-code cache. Unsized images of the active plan and its background are preloaded, and a `Link` header preloads the CSS and fonts. The response is `no-store` (it carries private data). The client keeps `body` children `visibility: hidden` until `reveal()` (first render done, fonts loaded, unsized images decoded, capped at 1.5s), so the first painted frame is the final layout. Everything else is a file from `dist/` (`serveAsset`). `cacheControl()` in `server.ts` marks fonts and `Sortable.min.js` `immutable` for a year: **rename the file** when replacing one, or browsers keep the old copy.
+`GET /` is assembled by the server (`servePage`, via Bun's `HTMLRewriter`): the data blob is inlined as `<script id="boot" type="application/json">` (absent if the read failed — the client then fetches `/api/data`, retrying every 3s), and `styles.css`/`app.js` are linked as `?v=<content hash>` which the server serves `immutable` (the shell HTML and both hashes are computed once at startup, since only a new build changes them) — repeat loads download nothing and reuse the browser's compiled-code cache. Unsized images of the active plan and its background are preloaded (fonts are preloaded by `index.html` itself). The response is `no-store` (it carries private data). The client keeps `body` children `visibility: hidden` until `reveal()` (first render done, fonts loaded, unsized images decoded, capped at 1.5s), so the first painted frame is the final layout. Everything else is a file from `dist/` (`serveAsset`). `cacheControl()` in `server.ts` marks fonts and `Sortable.min.js` `immutable` for a year: **rename the file** when replacing one, or browsers keep the old copy.
 
 ## Client architecture (`public/app.js`)
 
@@ -153,4 +155,4 @@ If you find yourself adding a desktop button, you're doing it wrong — bind a k
 
 ## Dev loop
 
-`bun run dev` builds and serves on `http://127.0.0.1:8787` with data in `./data/plan.db` (localhost counts as a secure context). `nix build` to check the package; `nix develop` gives bun + sqlite3.
+`bun run dev` builds and serves on `http://127.0.0.1:8787` with data in `./data/plan.db` (localhost counts as a secure context).
