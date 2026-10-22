@@ -1,7 +1,6 @@
-// Copies public/ to dist/ (what wrangler uploads) with comments and whitespace
+// Copies public/ to dist/ (what server.ts serves) with comments and whitespace
 // stripped from everything the browser downloads, so the sources can stay
-// thoroughly commented at no network cost. Run by wrangler before every
-// deploy/dev (`build.command` in wrangler.jsonc).
+// thoroughly commented at no network cost. Run by the Nix build and `bun run dev`.
 import { cp, readFile, rm, writeFile } from "node:fs/promises";
 
 await rm("dist", { recursive: true, force: true });

@@ -1,14 +1,29 @@
-// `image` is an image id (the bytes live at `img:<id>`, see src/images.ts), never
-// image bytes — the whole blob is re-uploaded on every save. `imageSize` is its
-// natural [width, height], so the client can reserve the box before the bytes
-// arrive.
+import { Database } from "bun:sqlite";
+
+// `image` is an image id (the bytes live in the `images` table, see
+// src/images.ts), never image bytes — the whole blob is re-uploaded on every
+// save. `imageSize` is its natural [width, height], so the client can reserve
+// the box before the bytes arrive.
 export interface Entry { id: string; text: string; todo?: boolean; image?: string; imageSize?: [number, number] }
 export interface List  { id: string; name: string; entries: Entry[] }
 export interface Plan  { id: string; name: string; lists: List[]; background?: string }
 export interface Data  { activePlanId: string; plans: Plan[]; version: number }
 
-const DATA_KEY = "data";
-const BACKUP_TTL_SECONDS = 7 * 24 * 60 * 60; // keep destructive-action backups for 1 week
+const BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep destructive-action backups for 1 week
+
+// Everything lives in one SQLite file: the data blob (a single row), the image
+// bytes, and the destructive-action backups. One file means one thing to back
+// up, and a save is a single transaction — the blob write, its backup and the
+// image cleanup it implies commit together or not at all.
+export function openDb(path: string): Database {
+  const db = new Database(path, { create: true });
+  db.run("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run("CREATE TABLE IF NOT EXISTS data (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)");
+  db.run("CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, ct TEXT NOT NULL, at INTEGER NOT NULL, bytes BLOB NOT NULL)");
+  db.run("CREATE TABLE IF NOT EXISTS backups (at INTEGER PRIMARY KEY, json TEXT NOT NULL)");
+  return db;
+}
 
 function listCount(plan: Plan): number {
   return Array.isArray(plan.lists) ? plan.lists.length : 0;
@@ -28,23 +43,12 @@ export function isDestructive(current: Data, next: Data): boolean {
   return false;
 }
 
-// A US/Los_Angeles timestamp formatted as mm-dd-yyyy--hh-mm (24-hour, no
-// seconds) for readable backup keys in the Cloudflare dashboard.
-function backupTimestamp(d = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-  }).formatToParts(d);
-  const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
-  return `${p.month}-${p.day}-${p.year}--${p.hour}-${p.minute}`;
-}
-
-// Snapshot `data` under a timestamped, auto-expiring key. The keys appear in the
-// Cloudflare KV dashboard as `backup:<mm-dd-yyyy--hh-mm>` (Los Angeles time); to
-// restore, copy a backup's value back into the `data` key.
-export async function backupData(kv: KVNamespace, data: Data): Promise<void> {
-  await kv.put(`backup:${backupTimestamp()}`, JSON.stringify(data), { expirationTtl: BACKUP_TTL_SECONDS });
+// Snapshot `data` keyed by the time it was replaced, dropping any older than a
+// week. Restoring is done by hand with sqlite3; see AGENTS.md.
+export function backupData(db: Database, data: Data): void {
+  const now = Date.now();
+  db.query("INSERT OR REPLACE INTO backups (at, json) VALUES (?, ?)").run(now, JSON.stringify(data));
+  db.query("DELETE FROM backups WHERE at < ?").run(now - BACKUP_TTL_MS);
 }
 
 function seed(): Data {
@@ -52,19 +56,20 @@ function seed(): Data {
   return { activePlanId: id, plans: [{ id, name: "Plan", lists: [] }], version: 1 };
 }
 
-export async function getData(kv: KVNamespace): Promise<Data> {
-  const stored = await kv.get<Data>(DATA_KEY, "json");
+export function getData(db: Database): Data {
+  const row = db.query<{ json: string }, []>("SELECT json FROM data WHERE id = 1").get();
+  const stored = row ? (JSON.parse(row.json) as Data) : null;
   if (stored && Array.isArray(stored.plans) && stored.plans.length > 0) {
     if (typeof stored.version !== "number") stored.version = 1; // migrate pre-versioning blobs
     return stored;
   }
   const fresh = seed();
-  await kv.put(DATA_KEY, JSON.stringify(fresh));
+  putData(db, fresh);
   return fresh;
 }
 
-export async function putData(kv: KVNamespace, data: Data): Promise<void> {
+export function putData(db: Database, data: Data): void {
   if (!data || !Array.isArray(data.plans)) throw new Error("invalid data");
   if (!data.plans.some(p => p.name === "Plan")) throw new Error("default plan 'Plan' is required");
-  await kv.put(DATA_KEY, JSON.stringify(data));
+  db.query("INSERT OR REPLACE INTO data (id, json) VALUES (1, ?)").run(JSON.stringify(data));
 }

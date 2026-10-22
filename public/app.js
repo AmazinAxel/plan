@@ -50,20 +50,12 @@ async function flushSave() {
     },
     body: JSON.stringify(cleaned)
   });
-  if (res.status === 401) {
-    // Session gone (secret rotated, cookie expired): keep the write pending and
-    // retry it once signed back in.
-    savePending = true;
-    showAuth(saveNow);
-    return;
-  }
   if (res.status === 409) {
     const remote = await res.json();
     // Another device wrote first; adopt its state instead of clobbering — but
-    // only if it really is ahead of us. KV reads are eventually consistent, so
-    // the version this rejection was measured against can be the blob we
-    // ourselves replaced a moment ago; adopting that would undo our own edits.
-    // Leave the write pending instead and try again once the read catches up.
+    // only if it really is ahead of us. A rejection measured against a blob no
+    // newer than ours isn't a real conflict; adopting it would undo our own
+    // edits, so leave the write pending and try again.
     if (remote.version > (state.data.version ?? 0)) applyRemote(remote);
     else save();
     return;
@@ -927,7 +919,7 @@ function openBg() {
 }
 
 // ---------- images ----------
-// One image per entry. The blob stores only an id; the bytes live in KV behind
+// One image per entry. The blob stores only an id; the bytes live server-side behind
 // /api/img. The server owns deletion — it diffs every write and drops whatever
 // the new blob no longer references — so the client's whole job is to keep the
 // reference honest and never resurrect a dead one (see scrubHistory).
@@ -943,11 +935,9 @@ const imgCache = new Map();
 const healing = new Set();
 let uploads = 0;
 
-// Blob URLs for images uploaded in this session. KV reads are eventually
-// consistent, so fetching one back straight after storing it can 404 — and a
-// miss can stay cached in that colo for up to a minute. Rendering from the
-// bytes we already have in hand sidesteps the window entirely, and doubles as
-// proof (see healBrokenImage) that these ids exist no matter what a read says.
+// Blob URLs for images uploaded in this session. Rendering from the bytes we
+// already have in hand skips a network round-trip, and doubles as proof (see
+// healBrokenImage) that these ids exist no matter what a read says.
 const objectUrls = new Map();
 const imgSrc = (id) => objectUrls.get(id) || imgUrl(id);
 
@@ -1038,9 +1028,8 @@ async function imageSize(blob) {
 // connection, and discarding a live image over one lost packet is not
 // recoverable.
 async function healBrokenImage(id) {
-  // Uploaded in this session: it exists, whatever a read says. KV is eventually
-  // consistent, so a 404 here would be a stale read, and acting on it would
-  // destroy an image the user just pasted.
+  // Uploaded in this session: it exists, whatever a read says, and acting on a
+  // bad read would destroy an image the user just pasted.
   if (objectUrls.has(id)) return;
   if (healing.has(id)) return;
   healing.add(id);
@@ -1056,7 +1045,7 @@ async function healBrokenImage(id) {
 
 // Downscale and re-encode before upload: a pasted screenshot is routinely 4MB
 // of PNG that renders into a ~300px column. Returns null when nothing usable
-// came out, so the caller can bail instead of uploading something the worker
+// came out, so the caller can bail instead of uploading something the server
 // will reject.
 async function encodeImage(file) {
   // A canvas round-trip flattens an animated GIF to its first frame.
@@ -1092,8 +1081,6 @@ async function attachImage(file, listId, entryId) {
       body: blob
     });
     if (res.ok) id = (await res.json()).id;
-    // Nothing was stored; sign back in, then the paste can simply be repeated.
-    else if (res.status === 401) showAuth(() => {});
   } catch { /* offline — nothing was stored */ }
   finally { uploads--; }
   if (!id) return;
@@ -1182,8 +1169,8 @@ function openImageViewFromNode(imgEl) {
 
 (function setupImageView() {
   const dlg = $("img-view");
-  // imgSrc, not imgUrl: an image pasted seconds ago may not be readable back
-  // from KV yet, and the in-memory copy always is.
+  // imgSrc, not imgUrl: an image pasted this session opens from the in-memory
+  // copy, with no round-trip.
   const openTab = () => { if (imgView) window.open(imgSrc(imgView.id), "_blank", "noopener"); };
   const remove = () => {
     if (!imgView) return;
@@ -1483,55 +1470,7 @@ if (state.isTouch) {
   });
 }
 
-// ---------- auth + boot ----------
-// Turnstile is only needed in the auth dialog, so load it on demand — the common
-// authed load then makes no connection to challenges.cloudflare.com.
-let turnstileLoaded = false;
-function loadTurnstile() {
-  if (turnstileLoaded) { window.turnstile?.reset(); return; }
-  turnstileLoaded = true;
-  const s = document.createElement("script");
-  s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
-  document.head.appendChild(s);
-}
-
-// `onAuthed` runs after a successful login. At boot that loads the data; when
-// the session dies mid-use (a 401 from a save, refresh or upload) it resumes
-// whatever was cut off instead, so unsaved edits survive the re-login.
-let authOpen = false;
-function showAuth(onAuthed = loadData) {
-  if (authOpen) return;
-  authOpen = true;
-  const dlg = $("auth");
-  const form = $("auth-form");
-  const input = $("auth-input");
-  const err = $("auth-error");
-  loadTurnstile();
-  dlg.showModal();
-  // Esc would close the dialog and strand a signed-out board behind it.
-  dlg.addEventListener("cancel", (e) => e.preventDefault());
-  form.addEventListener("submit", async function onSubmit(e) {
-    e.preventDefault();
-    err.hidden = true;
-
-    const token = form.querySelector('[name="cf-turnstile-response"]')?.value || "";
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: input.value, turnstile: token })
-    });
-    if (res.ok) {
-      form.removeEventListener("submit", onSubmit);
-      authOpen = false;
-      input.value = "";
-      dlg.close();
-      await onAuthed();
-    }
-    // Any failure consumes the token, so reset the widget for a fresh one.
-    else { err.hidden = false; input.select(); window.turnstile?.reset(); }
-  });
-}
-
+// ---------- boot ----------
 // The page arrives hidden (body:not(.ready) in styles.css) and is revealed only
 // once the first render is complete — fonts in, any image without a reserved box decoded
 // — so the first painted frame is the settled one. Capped, so a slow font or
@@ -1550,16 +1489,16 @@ async function reveal() {
 }
 
 async function loadData() {
-  // Inlined by the worker on the initial page load (null when unauthed); only a
-  // post-login load has to fetch.
+  // Inlined by the server on the initial page load; only fetched if that read
+  // failed (or the previous fetch did, retried every few seconds).
   const boot = $("boot");
   let data = boot ? JSON.parse(boot.textContent) : undefined;
   boot?.remove();
   if (data === undefined) {
-    const res = await fetch("/api/data");
-    data = res.ok ? await res.json() : null;
+    const res = await fetch("/api/data").catch(() => null);
+    data = res?.ok ? await res.json() : null;
   }
-  if (!data) { await reveal(); showAuth(); return; }
+  if (!data) { await reveal(); setTimeout(loadData, 3000); return; }
   state.data = data;
   if (state.isTouch || innerWidth < 600) body.dataset.view = "single";
   setupTouch();
@@ -1590,13 +1529,11 @@ async function refresh() {
   refreshing = true;
   try { res = await fetch("/api/data", { cache: "no-store" }); } catch { return; }
   finally { refreshing = false; }
-  if (res.status === 401) { showAuth(refresh); return; }
   if (!res.ok) return;
   const remote = await res.json();
-  // Strictly newer only. KV reads are eventually consistent, so a refresh right
-  // after a save can hand back the blob we just replaced — adopting that would
-  // roll our own edits back, and an image reference lost that way gets its bytes
-  // deleted by the next write's diff.
+  // Strictly newer only. A refresh racing a save can hand back the blob we just
+  // replaced — adopting that would roll our own edits back, and an image
+  // reference lost that way gets its bytes deleted by the next write's diff.
   if (remote.version > (state.data.version ?? 0)) applyRemote(remote);
 }
 
@@ -1613,6 +1550,6 @@ window.addEventListener("beforeunload", (e) => {
 
 if (!window.Sortable) $("sortable-js").addEventListener("load", attachSortables);
 
-// The worker inlines the data blob (or null when unauthed) into the page, so
-// boot needs no round-trip at all.
+// The server inlines the data blob into the page, so boot needs no round-trip
+// at all.
 loadData();

@@ -23,9 +23,6 @@
   --lightest1: #eceff4;
   --lightest3: #d8dee9;
 
-  /* Aurora */
-  --red: #bf616a;
-
   /* Frost */
   --blue2: #81a1c1;
   --blue3: #5e81ac;
@@ -43,7 +40,6 @@
   --border: var(--darkest3);
   --accent: var(--blue2);
   --selection: var(--blue2);
-  --danger: var(--red);
 }
 
 * {
@@ -638,15 +634,6 @@ body.touch #palette-input {
 #palette-list li[data-default]::after {
   content: " ★";
   color: var(--muted);
-}
-
-.cf-turnstile {
-  margin: 12px 0 0;
-}
-
-#auth-error {
-  color: var(--danger);
-  margin: 8px 0 0;
 }
 
 .sortable-ghost {

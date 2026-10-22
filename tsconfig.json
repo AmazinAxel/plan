@@ -1,10 +1,10 @@
 {
-  "include": ["worker.ts", "src/**/*.ts"],
+  "include": ["server.ts", "build.ts", "src/**/*.ts", "scripts/**/*.ts"],
   "compilerOptions": {
-    "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types"],
-    "target": "ES2022",
-    "module": "ES2022",
+    "lib": ["ESNext"],
+    "types": ["bun"],
+    "target": "ESNext",
+    "module": "Preserve",
     "moduleResolution": "Bundler",
     "strict": true,
     "isolatedModules": true,
