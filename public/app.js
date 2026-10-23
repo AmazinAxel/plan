@@ -869,7 +869,8 @@ function openPalette() {
     const total = count();
     const down = e.key === "ArrowDown" || e.key === "J";
     const up = e.key === "ArrowUp" || e.key === "K";
-    if (e.shiftKey && (down || up)) { e.preventDefault(); reorder(down ? 1 : -1); }
+    if (e.key === " " && !input.value) { e.preventDefault(); dlg.close(); }
+    else if (e.shiftKey && (down || up)) { e.preventDefault(); reorder(down ? 1 : -1); }
     else if ((down || up) && total) {
       e.preventDefault();
       highlighted = wrap(highlighted + (down ? 1 : -1), total);
