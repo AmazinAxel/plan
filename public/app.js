@@ -143,9 +143,14 @@ function render() {
   const scrolls = {};
   board.querySelectorAll(".entries").forEach((ul) => { scrolls[ul.dataset.listId] = ul.scrollTop; });
   const boardScrollLeft = board.scrollLeft;
-  board.innerHTML = "";
+  // Sections and their scrollers are reused by list id, not rebuilt: Servo
+  // applies scrollTop on a brand-new scroller a frame late, so an arrow key
+  // painted the moved selection before the list scrolled to it.
+  const old = new Map([...board.querySelectorAll(".list")].map((s) => [s.dataset.listId, s]));
   plan.lists.forEach((l, li) => {
-    const el = document.createElement("section");
+    const el = old.get(l.id) ?? document.createElement("section");
+    old.delete(l.id);
+    for (const k of Object.keys(el.dataset)) delete el.dataset[k];
     el.className = "list";
     el.dataset.listId = l.id;
     if (li === state.selection.listIndex) {
@@ -158,11 +163,11 @@ function render() {
     name.className = "list-name";
     name.textContent = l.name;
     name.dataset.role = "list-name";
-    el.appendChild(name);
-
-    const ul = document.createElement("ul");
+    const ul = el.querySelector(".entries") ?? document.createElement("ul");
     ul.className = "entries";
     ul.dataset.listId = l.id;
+    ul.replaceChildren();
+    el.replaceChildren(name, ul);
     l.entries.forEach((e, ei) => {
       const it = document.createElement("li");
       it.className = "entry";
@@ -176,11 +181,15 @@ function render() {
       if (li === state.selection.listIndex && ei === state.selection.entryIndex) it.dataset.selected = "";
       ul.appendChild(it);
     });
-    el.appendChild(ul);
-    board.appendChild(el);
-    if (scrolls[l.id] != null) ul.scrollTop = scrolls[l.id];
+    // Only move a section that's out of place; detaching drops its scroll offset.
+    const at = board.children[li];
+    if (at !== el) {
+      board.insertBefore(el, at ?? null);
+      if (scrolls[l.id] != null) ul.scrollTop = scrolls[l.id];
+    }
   });
-  board.scrollLeft = boardScrollLeft;
+  old.forEach((s) => s.remove());
+  if (board.scrollLeft !== boardScrollLeft) board.scrollLeft = boardScrollLeft;
 
   renderDots(plan);
   attachSortables();

@@ -120,8 +120,26 @@ dialog {
   min-width: 280px;
 }
 
+/* Positioned and dimmed by hand rather than via the UA modal styles and
+   ::backdrop, which Servo doesn't render: a viewport-sized shadow is the dimmer. */
+dialog[open] {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
+  z-index: 100;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.5);
+}
+
 dialog::backdrop {
-  background: rgba(0, 0, 0, 0.5);
+  background: transparent;
+}
+
+dialog input {
+  width: 100%;
 }
 
 /* One even gap between dialog children via flex gap (not per-element margins),
@@ -362,22 +380,21 @@ body[data-mode="insert"] .entry[data-selected][data-todo] {
 #img-view {
   width: 100vw;
   max-width: 100vw;
+  height: 100vh;
   height: 100dvh;
-  max-height: 100dvh;
+  max-width: none;
+  max-height: none;
   padding: 0;
   border: 0;
   min-width: 0;
-  background: transparent;
+  background: rgba(0, 0, 0, 0.82);
+  box-shadow: none;
   overflow: hidden;
 }
 
 #img-view[open] {
   display: flex;
   flex-direction: column;
-}
-
-#img-view::backdrop {
-  background: rgba(0, 0, 0, 0.82);
 }
 
 /* The image is sized by its own box rather than stretched to fill, so the empty
@@ -476,6 +493,7 @@ body[data-view="multi"] #dots {
 body.touch {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   height: 100dvh;
 }
 
