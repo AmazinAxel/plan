@@ -133,7 +133,7 @@ Detected via `matchMedia("(hover: none) and (pointer: coarse)")` OR mobile UA re
 - Tap entry: select + edit, caret at tap. Soft-keyboard Enter commits and always opens fresh entry below (keyboard stays up); Enter on blank commits nothing, stops. `chainable` flag through `newEntryBelow`/`editEntry` marks new-list flow (chains on desktop too); else desktop follows its Enter rule. New list name starts chain only if committed with Enter (`chainOnCommit` in `editList`); tap away just creates list. Chain ends on non-Enter blur (tap outside) → normal mode. Touch outside live field commits on lift (recovers to normal if `insert` with no focused field).
 - Tap `.list-name`: select list (`entryIndex = -1`), edit name.
 - `#actions`: `del-plan`, `new-list`, `del-list`, `toggle-todo` (= desktop Tab). New plans via palette `<New plan>` only.
-- Tap entry image → preview: fills viewport, faded backdrop, own bar `#img-actions` (new tab / delete) since `#actions` is behind backdrop. Tap outside picture/bar closes; `#img-view` has own close handler, not `attachBackdropClose` (letterboxing hits `<img>`). Desktop: `Delete`/`Backspace`, `n` (new tab), `Esc`.
+- Tap entry image → preview: fills viewport, faded backdrop, own bar `#img-actions` (new tab / delete) since `#actions` is behind backdrop. Tap outside picture/bar closes; `#img-view` has own close handler, not `attachBackdropClose` (letterboxing hits `<img>`). Desktop: `Delete`/`Backspace`, `n` (new tab), `c` (copy as PNG), `Esc`.
 - All modals close on backdrop tap. Anything dismissing on `pointerdown` (backdrop, palette rows via `fastTap`, `.confirm-btn`) calls `swallowNextClick()`.
 
 ## Styling (`public/styles.css`)

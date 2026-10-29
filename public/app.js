@@ -1235,6 +1235,21 @@ function openImageViewFromNode(imgEl) {
   // imgSrc, not imgUrl: an image pasted this session opens from the in-memory
   // copy, with no round-trip.
   const openTab = () => { if (imgView) window.open(imgSrc(imgView.id), "_blank", "noopener"); };
+  // Re-encode the shown picture as PNG, the one image type every browser's
+  // clipboard accepts. The Promise form keeps the write inside the keypress's
+  // user activation (Safari requires it).
+  const copy = () => {
+    const img = $("img-view-img");
+    if (!imgView || !img.naturalWidth) return;
+    const png = new Promise((resolve, reject) => {
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext("2d").drawImage(img, 0, 0);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/png");
+    });
+    navigator.clipboard?.write([new ClipboardItem({ "image/png": png })]).catch(() => {});
+  };
   const remove = () => {
     if (!imgView) return;
     const { listId, entryId } = imgView;
@@ -1244,6 +1259,7 @@ function openImageViewFromNode(imgEl) {
   dlg.addEventListener("keydown", (e) => {
     if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); remove(); }
     else if (e.key === "n" || e.key === "N") { e.preventDefault(); openTab(); }
+    else if (e.key === "c" || e.key === "C") { e.preventDefault(); copy(); }
     // Escape: see the dialog handler near the end of the file.
   });
   dlg.addEventListener("close", () => {
