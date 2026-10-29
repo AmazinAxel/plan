@@ -20,7 +20,10 @@ const state = {
   lastListIndex: 0
 };
 
-const uuid = () => crypto.randomUUID();
+// Servo built without its webcrypto feature (flurry's sideview) has no `crypto`
+// global; ids only need to be unique, so Math.random stands in there.
+const uuid = () => globalThis.crypto?.randomUUID?.() ??
+  "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (c ^ (Math.random() * 16) >> (c / 4)).toString(16));
 const wrap = (i, n) => ((i % n) + n) % n;
 const isField = (el) => el?.tagName === "INPUT" || el?.tagName === "TEXTAREA";
 const activePlan = () =>
