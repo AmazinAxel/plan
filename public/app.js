@@ -440,11 +440,16 @@ function caretOffsetFromPoint(x, y, entryEl) {
   if (!text || text.nodeType !== Node.TEXT_NODE || !text.textContent) return null;
   const range = document.createRange();
   const len = text.textContent.length;
+  // Servo has neither hit-test above and answers this with whole-element boxes
+  // instead of glyph boxes; skipping anything no glyph could be leaves no
+  // match there, so the caret falls back to the end rather than the start.
+  const half = entryEl.clientWidth / 2;
   let best = null, bestDist = Infinity;
   for (let i = 0; i < len; i++) {
     range.setStart(text, i);
     range.setEnd(text, i + 1);
     for (const r of range.getClientRects()) {
+      if (r.width > half) continue;
       // Heavily penalise rects on other wrapped lines so the tap stays on its row.
       const offLine = (y < r.top || y > r.bottom) ? 1e6 : 0;
       const dLeft = Math.abs(x - r.left) + offLine;   // caret before this char
@@ -1236,7 +1241,7 @@ function openImageViewFromNode(imgEl) {
   dlg.addEventListener("keydown", (e) => {
     if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); remove(); }
     else if (e.key === "n" || e.key === "N") { e.preventDefault(); openTab(); }
-    // Escape closes natively.
+    // Escape: see the dialog handler near the end of the file.
   });
   dlg.addEventListener("close", () => {
     imgView = null;
@@ -1503,6 +1508,13 @@ function setupTouch() {
 
 // Backdrop click closes a dialog (mobile expectation).
 ["palette", "confirm", "bg"].forEach((id) => attachBackdropClose($(id)));
+
+// Escape closes the open dialog. Native for modals elsewhere, but Servo has no
+// cancel action; running first (capture) and preventing it keeps it one close.
+window.addEventListener("keydown", (e) => {
+  const dlg = e.key === "Escape" && document.querySelector("dialog[open]");
+  if (dlg) { e.preventDefault(); dlg.close(); }
+}, true);
 
 // The preview fills the viewport, so its "backdrop" is everything that isn't
 // the picture or the action bar — attachBackdropClose's `target === dialog`
