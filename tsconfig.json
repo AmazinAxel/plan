@@ -1,5 +1,5 @@
 {
-  "include": ["server.ts", "build.ts", "src/**/*.ts", "scripts/**/*.ts"],
+  "include": ["server.ts", "build.ts", "src/**/*.ts"],
   "compilerOptions": {
     "lib": ["ESNext"],
     "types": ["bun"],

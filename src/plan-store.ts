@@ -28,10 +28,6 @@ export function openDb(path: string): Database {
   return db;
 }
 
-function listCount(plan: Plan): number {
-  return Array.isArray(plan.lists) ? plan.lists.length : 0;
-}
-
 // True when `next` removes an entire plan or list relative to `current` — the
 // destructive edits worth snapshotting so they can be rolled back. Entry-level
 // changes and ordinary edits are intentionally ignored to keep backups sparse.
@@ -41,7 +37,7 @@ export function isDestructive(current: Data, next: Data): boolean {
   const nextById = new Map(next.plans.map((p) => [p.id, p]));
   for (const cur of current.plans) {
     const n = nextById.get(cur.id);
-    if (n && listCount(n) < listCount(cur)) return true; // a list was deleted
+    if (n && (n.lists?.length ?? 0) < (cur.lists?.length ?? 0)) return true; // a list was deleted
   }
   return false;
 }
@@ -62,7 +58,9 @@ function seed(): Data {
 // This process is the only writer, so the blob is read from disk once and
 // served from memory after that. Edit the database by hand only with the
 // service stopped.
+// Its serialized form is kept too, so serving the blob never re-stringifies it.
 let cache: Data | null = null;
+let cacheJson = "";
 
 // For a write that rolled back after putData had already cached it.
 export const dropCache = () => { cache = null; };
@@ -72,7 +70,11 @@ export function getData(db: Database): Data {
   const row = db.query<{ json: string }, []>("SELECT json FROM data WHERE id = 1").get();
   const stored = row ? (JSON.parse(row.json) as Data) : null;
   if (stored && Array.isArray(stored.plans) && stored.plans.length > 0) {
-    if (typeof stored.version !== "number") stored.version = 1; // migrate pre-versioning blobs
+    cacheJson = row!.json;
+    if (typeof stored.version !== "number") { // migrate pre-versioning blobs
+      stored.version = 1;
+      cacheJson = JSON.stringify(stored);
+    }
     return (cache = stored);
   }
   const fresh = seed();
@@ -80,9 +82,17 @@ export function getData(db: Database): Data {
   return fresh;
 }
 
+/** getData, serialized. */
+export function getJson(db: Database): string {
+  getData(db);
+  return cacheJson;
+}
+
 export function putData(db: Database, data: Data): void {
   if (!data || !Array.isArray(data.plans)) throw new Error("invalid data");
   if (!data.plans.some(p => p.name === "Plan")) throw new Error("default plan 'Plan' is required");
-  db.query("INSERT OR REPLACE INTO data (id, json) VALUES (1, ?)").run(JSON.stringify(data));
+  const json = JSON.stringify(data);
+  db.query("INSERT OR REPLACE INTO data (id, json) VALUES (1, ?)").run(json);
   cache = data;
+  cacheJson = json;
 }

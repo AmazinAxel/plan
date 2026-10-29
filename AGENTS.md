@@ -72,7 +72,7 @@ sudo systemctl start plan
 ## API
 | Method | Path | Behavior |
 |---|---|---|
-| GET | `/api/data` | full blob (seeds on first read if missing) |
+| GET | `/api/data` | full blob (seeds on first read if missing); 304 if `X-Plan-Version` is current |
 | PUT | `/api/data` | replace blob (409 + current if `X-Plan-Version` stale); enforces `Plan`; deletes newly-unreferenced images same transaction |
 | POST | `/api/img` | store image (≤10 MB, image types) → `{ id }` |
 | GET/HEAD | `/api/img/<id>` | fetch, immutable (HEAD = existence probe) |
@@ -89,7 +89,7 @@ sudo systemctl start plan
 ## Client (`public/app.js`)
 Four concerns, in file order:
 1. State + persistence: `state.data` mirrors server. `save()` throttles one PUT per `SAVE_INTERVAL` (5s); `saveNow()` immediate for destructive (deletes, undo, images, background).
-2. Render: one `render()` rebuilds `<main>` from scratch. Data tiny; don't optimize.
+2. Render: one `render()` reconciles `<main>` by list/entry id (`listEls`/`entryEls` maps; `_k`/`_f`/`_sel`/`_items` node caches) and touches only what changed; Sortables kept per element. Servo pays per DOM call + per reflow (full rebuild ≈ 10× slower there). Code that hollows out a node (editors) resets its `_k`. Measure before writes, write after (`scrollSelectionIntoView`): one forced layout per action.
 3. Modes: `body.dataset.mode` = `"normal" | "insert" | "palette" | "confirm" | "image"` (background dialog reuses `palette`). Desktop key handler no-op outside `normal`.
    - Undo: `pushHistory()` deep-clones `state.data` + `selection` onto 5-deep stack before each mutation; `undo()` (Ctrl+Z, normal only) restores. Restored snapshots keep live `state.data.version` (no 409). Abandoned creations pop their snapshot (no no-op undo). `applyRemote()` clears stack.
 4. Drag: SortableJS, groups `"lists"` (horizontal), `"entries"`. Cross-list in single view: drag flips to multi view for duration (`onStart` in `attachSortables`), back on drop. Own edge auto-scroll replaces Sortable's. Disabled while editing (text selection). Desktop single view cycles lists on 80px+ horizontal mouse drag over empty board.

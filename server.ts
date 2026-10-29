@@ -4,7 +4,7 @@
 // and anyone who can reach the port has the data.
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getData, putData, isDestructive, backupData, openDb, dropCache, type Data } from "./src/plan-store";
+import { getData, getJson, putData, isDestructive, backupData, openDb, dropCache, type Data } from "./src/plan-store";
 import {
   ALLOWED_TYPES, DISOWN_WINDOW_MS, MAX_IMAGE_BYTES, SWEEP_INTERVAL_MS, deleteImage, getImage,
   imageMeta, imageRefs, isImageId, putImage, reconcile, sweep,
@@ -56,9 +56,8 @@ async function handleImage(req: Request, id: string): Promise<Response> {
     const img = getImage(db, id);
     if (!img) return new Response(null, { status: 404 });
     // Ids are unique per upload and an image is never rewritten, so the bytes at
-    // a given URL can't change — the browser may keep them forever. That matters
-    // here: render() rebuilds the whole board on every keystroke, so each repaint
-    // would otherwise re-request every visible image.
+    // a given URL can't change — the browser may keep them forever, and never
+    // re-requests one on a reload or plan switch.
     return new Response(img.bytes, {
       headers: { "Content-Type": img.ct, "Cache-Control": "private, max-age=31536000, immutable" },
     });
@@ -88,7 +87,10 @@ const saveData = db.transaction((body: Data, expected: string | null): Response 
   // data instead of clobbering it.
   const current = getData(db);
   if (expected !== null && expected !== String(current.version)) {
-    return json(current, { status: 409, headers: { "X-Plan-Version": String(current.version) } });
+    return new Response(getJson(db), {
+      status: 409,
+      headers: { "Content-Type": "application/json", "X-Plan-Version": String(current.version) },
+    });
   }
   const next = { ...body, version: current.version + 1 };
   // Snapshot the state being replaced when this write deletes a plan or list.
@@ -162,8 +164,8 @@ const [beforePreloads, beforeBoot, rest] = (await new HTMLRewriter()
 function servePage(): Response {
   // A failed read yields `undefined`, which the client answers by fetching
   // /api/data itself.
-  let data: Data | undefined;
-  try { data = getData(db); } catch (e) { console.error("read", e); }
+  let data: Data | undefined, raw = "";
+  try { data = getData(db); raw = getJson(db); } catch (e) { console.error("read", e); }
 
   const plan = data && (data.plans.find((p) => p.id === data.activePlanId) || data.plans[0]);
   const preloads: string[] = [];
@@ -180,7 +182,7 @@ function servePage(): Response {
   }
   // `<` escaped so nothing in an entry's text can close the script element.
   const boot = data === undefined ? "" :
-    `<script id="boot" type="application/json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
+    `<script id="boot" type="application/json">${raw.replace(/</g, "\\u003c")}</script>`;
 
   return new Response(beforePreloads + preloads.join("") + beforeBoot + boot + rest, {
     headers: {
@@ -214,7 +216,11 @@ async function route(req: Request, url: URL): Promise<Response> {
   }
 
   if (path === "/api/data") {
-    if (req.method === "GET") return json(getData(db));
+    if (req.method === "GET") {
+      // A refresh that already holds the current version gets nothing back.
+      if (req.headers.get("X-Plan-Version") === String(getData(db).version)) return new Response(null, { status: 304 });
+      return new Response(getJson(db), { headers: { "Content-Type": "application/json" } });
+    }
     if (req.method === "PUT") {
       let body: Data;
       try { body = (await req.json()) as Data; } catch { return json({ error: "bad body" }, { status: 400 }); }

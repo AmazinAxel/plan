@@ -1,3 +1,7 @@
+// Shared with the server, so the client never uploads what it would reject;
+// build.ts bundles it in.
+import { ALLOWED_TYPES, MAX_IMAGE_BYTES } from "../src/images.ts";
+
 const $ = (id) => document.getElementById(id);
 const body = document.body;
 const board = $("board");
@@ -34,21 +38,19 @@ async function flushSave() {
   if (!savePending) return;
   savePending = false;
   lastSaveAt = Date.now();
-  // Strip blank entries on a clone, so an in-progress edit survives in memory.
-  // An entry carrying an image is never blank — the picture is its content, and
-  // dropping it here would hide the reference from the server, whose orphan
-  // diff would then delete an image the client is still showing.
-  const cleaned = JSON.parse(JSON.stringify(state.data));
-  cleaned.plans.forEach((p) => p.lists.forEach((l) => {
-    l.entries = l.entries.filter((e) => (e.text && e.text.trim()) || e.image);
-  }));
+  // Strip blank entries while serializing, so an in-progress edit survives in
+  // memory. An entry carrying an image is never blank — the picture is its
+  // content, and dropping it here would hide the reference from the server,
+  // whose orphan diff would then delete an image the client is still showing.
+  const json = JSON.stringify(state.data, (k, v) =>
+    k === "entries" ? v.filter((e) => (e.text && e.text.trim()) || e.image) : v);
   const res = await fetch("/api/data", {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
       "X-Plan-Version": String(state.data.version ?? 0)
     },
-    body: JSON.stringify(cleaned)
+    body: json
   });
   if (res.status === 409) {
     const remote = await res.json();
@@ -86,7 +88,7 @@ const HISTORY_LIMIT = 5;
 const history = [];
 function pushHistory() {
   history.push({
-    data: JSON.parse(JSON.stringify(state.data)),
+    data: structuredClone(state.data),
     selection: { ...state.selection }
   });
   if (history.length > HISTORY_LIMIT) history.shift();
@@ -128,9 +130,13 @@ function setMode(mode) { body.dataset.mode = mode; }
 const undash = (s) => s.replace(/[—–]/g, "--");
 const isSep = (s) => /^-{2,}(\s.*\s-{2,})?$/.test(s);
 
+// Rendered nodes by list/entry id (see render()).
+const listEls = new Map();
+const entryEls = new Map();
+
 function render() {
   const plan = activePlan();
-  if (!plan) { board.innerHTML = ""; return; }
+  if (!plan) { board.innerHTML = ""; listEls.clear(); entryEls.clear(); return; }
 
   if (state.selection.listIndex >= plan.lists.length) state.selection.listIndex = Math.max(0, plan.lists.length - 1);
   const list = plan.lists[state.selection.listIndex];
@@ -139,63 +145,98 @@ function render() {
   // Remember the last genuinely-selected list so we can fall back to it when the
   // selection is cleared (delete-list with nothing active, toggle-view, etc.).
   if (state.selection.listIndex >= 0) state.lastListIndex = state.selection.listIndex;
-  // Preserve per-list scroll positions across the rebuild.
+  // Preserve per-list scroll positions for any section that has to move. Read
+  // before any write, so this never forces a layout.
   const scrolls = {};
-  board.querySelectorAll(".entries").forEach((ul) => { scrolls[ul.dataset.listId] = ul.scrollTop; });
+  listEls.forEach((el, id) => { scrolls[id] = el.lastChild.scrollTop; });
   const boardScrollLeft = board.scrollLeft;
-  // Sections and their scrollers are reused by list id, not rebuilt: Servo
-  // applies scrollTop on a brand-new scroller a frame late, so an arrow key
-  // painted the moved selection before the list scrolled to it.
-  const old = new Map([...board.querySelectorAll(".list")].map((s) => [s.dataset.listId, s]));
+  let moved = false;
+  // Lists and entries are reconciled by id against what's already on screen and
+  // only what differs is touched — a selection move flips two attributes. Every
+  // DOM call costs (Servo especially: each is a binding crossing, each write
+  // dirties layout), and brand-new scrollers there apply scrollTop a frame late
+  // (selection painted before the list scrolled to it). Nodes are looked up in
+  // JS maps, not queried; `_k`/`_f`/`_sel`/`_items` cache what a node last
+  // rendered (editors that hollow a node out reset `_k`).
+  const oldLists = new Map(listEls);
+  const oldEntries = new Map(entryEls);
+  listEls.clear(); entryEls.clear();
   plan.lists.forEach((l, li) => {
-    const el = old.get(l.id) ?? document.createElement("section");
-    old.delete(l.id);
-    for (const k of Object.keys(el.dataset)) delete el.dataset[k];
-    el.className = "list";
-    el.dataset.listId = l.id;
-    if (li === state.selection.listIndex) {
-      el.dataset.selected = ""; el.dataset.active = "";
-      if (state.selection.entryIndex === -1) el.dataset.listSelected = "";
-      else if (state.selection.entryIndex === 0) el.dataset.firstSelected = "";
+    let el = oldLists.get(l.id);
+    oldLists.delete(l.id);
+    if (!el) {
+      el = document.createElement("section");
+      el.className = "list";
+      el.dataset.listId = l.id;
+      const name = document.createElement("div");
+      name.className = "list-name";
+      name.dataset.role = "list-name";
+      const ul = document.createElement("ul");
+      ul.className = "entries";
+      ul.dataset.listId = l.id;
+      el.append(name, ul);
+    }
+    listEls.set(l.id, el);
+    const sel = li === state.selection.listIndex;
+    const f = sel ? state.selection.entryIndex : null;
+    if (el._f !== f) {
+      el.toggleAttribute("data-selected", sel);
+      el.toggleAttribute("data-active", sel);
+      el.toggleAttribute("data-list-selected", sel && f === -1);
+      el.toggleAttribute("data-first-selected", sel && f === 0);
+      el._f = f;
     }
 
-    const name = document.createElement("div");
-    name.className = "list-name";
-    name.textContent = l.name;
-    name.dataset.role = "list-name";
-    const ul = el.querySelector(".entries") ?? document.createElement("ul");
-    ul.className = "entries";
-    ul.dataset.listId = l.id;
-    ul.replaceChildren();
-    el.replaceChildren(name, ul);
-    l.entries.forEach((e, ei) => {
-      const it = document.createElement("li");
-      it.className = "entry";
-      it.dataset.entryId = e.id;
-      it.textContent = e.text;
-      // Appended after the text, so `it.firstChild` stays the text node that
-      // caretOffsetFromPoint measures against.
-      if (e.image) it.appendChild(imgFor(e.image, e.imageSize));
-      if (isSep(e.text)) it.dataset.sep = "";
-      if (e.todo) it.dataset.todo = "";
-      if (li === state.selection.listIndex && ei === state.selection.entryIndex) it.dataset.selected = "";
-      ul.appendChild(it);
+    const name = el.firstChild, ul = el.lastChild;
+    if (name._k !== l.name) { name.textContent = l.name; name._k = l.name; }
+    const kids = ul._items ?? [];
+    let same = kids.length === l.entries.length;
+    const items = l.entries.map((e, ei) => {
+      let it = oldEntries.get(e.id);
+      if (!it) {
+        it = document.createElement("li");
+        it.className = "entry";
+        it.dataset.entryId = e.id;
+      }
+      entryEls.set(e.id, it);
+      const k = `${e.text}\n${e.image}\n${e.imageSize}\n${e.todo}`;
+      if (it._k !== k) {
+        it.textContent = e.text;
+        // Appended after the text, so `it.firstChild` stays the text node that
+        // caretOffsetFromPoint measures against.
+        if (e.image) it.appendChild(imgFor(e.image, e.imageSize));
+        it.toggleAttribute("data-sep", isSep(e.text));
+        it.toggleAttribute("data-todo", !!e.todo);
+        it._k = k;
+      }
+      const on = sel && ei === state.selection.entryIndex;
+      if (it._sel !== on) { it.toggleAttribute("data-selected", on); it._sel = on; }
+      if (kids[ei] !== it) same = false;
+      return it;
     });
+    // Compared against what we last rendered, not the live children: a drag
+    // moves nodes behind our back, and its onEnd re-renders the new order anyway.
+    if (!same) ul.replaceChildren(...items);
+    ul._items = items;
     // Only move a section that's out of place; detaching drops its scroll offset.
     const at = board.children[li];
     if (at !== el) {
+      moved = true;
       board.insertBefore(el, at ?? null);
       if (scrolls[l.id] != null) ul.scrollTop = scrolls[l.id];
     }
   });
-  old.forEach((s) => s.remove());
-  if (board.scrollLeft !== boardScrollLeft) board.scrollLeft = boardScrollLeft;
+  oldLists.forEach((s) => s.remove());
+  if (moved) board.scrollLeft = boardScrollLeft;
 
   renderDots(plan);
   attachSortables();
-  $("m-plan-name").textContent = plan.name || "—";
-  $("m-del-plan").hidden = plan.name === "Plan";
-  document.title = !plan.name ? "plan" : plan.name === "Plan" ? "Plan" : `${plan.name} plan`;
+  const title = plan.name || "—";
+  if ($("m-plan-name").textContent !== title) $("m-plan-name").textContent = title;
+  const isDefault = plan.name === "Plan";
+  if ($("m-del-plan").hidden !== isDefault) $("m-del-plan").hidden = isDefault;
+  const docTitle = !plan.name ? "plan" : isDefault ? "Plan" : `${plan.name} plan`;
+  if (document.title !== docTitle) document.title = docTitle;
   showBackground(plan.background);
 }
 
@@ -244,23 +285,21 @@ function showBackground(bg) {
 
 function renderDots(plan) {
   const dots = $("dots");
-  dots.innerHTML = "";
-  dots.hidden = plan.lists.length <= 1;
-  if (dots.hidden) return;
-  plan.lists.forEach((_, i) => {
-    const d = document.createElement("span");
-    if (i === state.selection.listIndex) d.dataset.active = "";
-    dots.appendChild(d);
-  });
+  const n = plan.lists.length > 1 ? plan.lists.length : 0;
+  dots.hidden = !n;
+  while (dots.children.length > n) dots.lastChild.remove();
+  while (dots.children.length < n) dots.appendChild(document.createElement("span"));
+  [...dots.children].forEach((d, i) => d.toggleAttribute("data-active", i === state.selection.listIndex));
 }
 
 // ---------- sortable ----------
-let sortables = [];
-function destroySortables() { sortables.forEach((s) => s.destroy()); sortables = []; }
+// One Sortable per element, kept across renders (render() reuses the board and
+// each list's <ul>); attachSortables() adds them for new lists and drops gone ones.
+const sortables = new Map();
 // Toggle dragging on all sortables. Disabled while editing so a mouse-drag to
 // select text inside the field isn't hijacked into an entry/list drag (which
 // also left the board in a glitched, unselectable state on abort). Ending an
-// edit calls render(), which rebuilds fresh (enabled) sortables.
+// edit calls render(), which re-enables them.
 function setDragEnabled(on) { sortables.forEach((s) => s.option("disabled", !on)); }
 
 // Auto-scroll a list while dragging an entry near its top/bottom edge. Works for
@@ -309,10 +348,10 @@ function stopAutoScroll() {
   document.removeEventListener("pointermove", autoScrollTrack, true);
 }
 function attachSortables() {
-  destroySortables();
-  const plan = activePlan();
   // Sortable loads async (see index.html); its load handler calls back in here.
-  if (!plan || !window.Sortable) return;
+  if (!activePlan() || !window.Sortable) return;
+  sortables.forEach((s, el) => { if (!el.isConnected) { s.destroy(); sortables.delete(el); } });
+  setDragEnabled(true);
 
   // Shared by the list sortable and the entry sortables. In single view,
   // body.dragging makes the CSS reveal every list for the drag's duration (so a
@@ -322,14 +361,14 @@ function attachSortables() {
     body.classList.add("dragging");
     startAutoScroll();
     if (body.dataset.view !== "single") return;
-    board.querySelectorAll(".list")[state.selection.listIndex]
+    listEls.get(activePlan().lists[state.selection.listIndex]?.id)
       ?.scrollIntoView({ behavior: "instant", inline: "center", block: "nearest" });
   };
   const endDrag = () => {
     body.classList.remove("dragging");
     stopAutoScroll();
   };
-  sortables.push(Sortable.create(board, {
+  if (!sortables.has(board)) sortables.set(board, Sortable.create(board, {
     group: "lists",
     animation: 120,
     draggable: ".list",
@@ -340,6 +379,7 @@ function attachSortables() {
       endDrag();
       if (ev.oldIndex === ev.newIndex) return;
       pushHistory();
+      const plan = activePlan();
       plan.lists.splice(ev.newIndex, 0, ...plan.lists.splice(ev.oldIndex, 1));
       state.selection.listIndex = ev.newIndex;
       save(); render();
@@ -347,7 +387,7 @@ function attachSortables() {
   }));
 
   board.querySelectorAll(".entries").forEach((ul) => {
-    sortables.push(Sortable.create(ul, {
+    if (!sortables.has(ul)) sortables.set(ul, Sortable.create(ul, {
       // Cross-list moves stay enabled even in single view: the drag reveals the
       // neighbouring lists (see onStart) so an entry can be dropped
       // into any of them.
@@ -362,6 +402,7 @@ function attachSortables() {
       onStart,
       onEnd: (ev) => {
         endDrag();
+        const plan = activePlan();
         const fromList = plan.lists.find((l) => l.id === ev.from.dataset.listId);
         const toList = plan.lists.find((l) => l.id === ev.to.dataset.listId);
         if (!fromList || !toList || (fromList === toList && ev.oldIndex === ev.newIndex)) return;
@@ -437,9 +478,9 @@ function editList(listIndex, isNew = false) {
   if (!list) return;
   setMode("insert");
   setDragEnabled(false);
-  const sec = board.querySelectorAll(".list")[listIndex];
-  const nameEl = sec.querySelector(".list-name");
+  const nameEl = listEls.get(list.id).firstChild;
   nameEl.textContent = "";
+  nameEl._k = null;
   const input = document.createElement("input");
   input.value = list.name;
   nameEl.appendChild(input);
@@ -484,12 +525,12 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   if (!entry) return;
   setMode("insert");
   setDragEnabled(false);
-  const sec = board.querySelectorAll(".list")[listIndex];
-  const it = sec.querySelectorAll(".entry")[entryIndex];
+  const it = entryEls.get(entry.id);
   // Only the text is replaced by the field — an attached image stays visible
   // while its entry is being edited.
   const img = it.querySelector("img");
   it.textContent = "";
+  it._k = null;
   const input = document.createElement("textarea");
   input.value = entry.text;
   input.rows = 1;
@@ -714,30 +755,38 @@ function scrollSelectionIntoView() {
   // than with scrollIntoView: that method walks every ancestor scroller, so
   // centering an entry vertically also nudged #board horizontally, which read
   // as the whole view jittering left/right on an up/down keypress.
-  const sec = board.querySelectorAll(".list")[state.selection.listIndex];
+  // All measuring happens before any scroll is written: a read after a write
+  // forces a second full reflow (expensive in Servo).
+  let left, top;
+  const list = activePlan()?.lists[state.selection.listIndex];
+  const sec = list && listEls.get(list.id);
   if (sec) {
     const bRect = board.getBoundingClientRect();
     const sRect = sec.getBoundingClientRect();
-    const left = board.scrollLeft + (sRect.left - bRect.left);
+    const x = board.scrollLeft + (sRect.left - bRect.left);
     const max = board.scrollWidth - board.clientWidth;
     let target = board.scrollLeft;
     // Only scroll when the list actually pokes past an edge (inline: "nearest"
     // semantics), otherwise a vertical move would drag the board sideways.
-    if (sRect.left - bRect.left < EDGE_PAD) target = left - EDGE_PAD;
+    if (sRect.left - bRect.left < EDGE_PAD) target = x - EDGE_PAD;
     else if (sRect.right - bRect.left > board.clientWidth - EDGE_PAD)
-      target = left - board.clientWidth + sec.offsetWidth + EDGE_PAD;
-    board.scrollLeft = Math.max(0, Math.min(max, target));
+      target = x - board.clientWidth + sec.offsetWidth + EDGE_PAD;
+    left = Math.max(0, Math.min(max, target));
+    if (left === board.scrollLeft) left = undefined;
   }
-  const sel = board.querySelector(".entry[data-selected]");
-  if (sel) {
-    const scroller = sel.closest(".entries");
-    if (!scroller) return;
+  const entry = list?.entries[state.selection.entryIndex];
+  const sel = entry && entryEls.get(entry.id);
+  const scroller = sel && sec.lastChild;
+  if (scroller) {
     const sRect = scroller.getBoundingClientRect();
     const eRect = sel.getBoundingClientRect();
     const target = scroller.scrollTop + (eRect.top - sRect.top) - (scroller.clientHeight / 2) + (eRect.height / 2);
     const max = scroller.scrollHeight - scroller.clientHeight;
-    scroller.scrollTop = Math.max(0, Math.min(max, target));
+    top = Math.max(0, Math.min(max, target));
+    if (Math.abs(top - scroller.scrollTop) < 1) top = undefined;
   }
+  if (left !== undefined) board.scrollLeft = left;
+  if (top !== undefined) scroller.scrollTop = top;
 }
 
 // ---------- modals ----------
@@ -934,13 +983,12 @@ function openBg() {
 // the new blob no longer references — so the client's whole job is to keep the
 // reference honest and never resurrect a dead one (see scrubHistory).
 const IMG_MAX_DIM = 1600;
-const IMG_MAX_BYTES = 10 * 1024 * 1024; // matches MAX_IMAGE_BYTES in src/images.ts
-const IMG_TYPES = new Set(["image/webp", "image/png", "image/jpeg", "image/gif", "image/avif"]);
 const imgUrl = (id) => `/api/img/${id}`;
 
-// render() rebuilds the whole board on every keystroke; reusing the same <img>
-// element per id means a repaint re-parents an already-decoded image instead of
-// creating a fresh one that flashes while the browser re-reads its cache.
+// render() rebuilds an entry's contents whenever its text changes, and a plan
+// switch rebuilds its lists; reusing the same <img> element per id means that
+// re-parents an already-decoded image instead of creating a fresh one that
+// flashes while the browser re-reads its cache.
 const imgCache = new Map();
 const healing = new Set();
 let uploads = 0;
@@ -984,10 +1032,6 @@ function selected() {
   return entry ? { list, entry } : null;
 }
 
-function selectedEntryIds() {
-  const sel = selected();
-  return sel && { listId: sel.list.id, entryId: sel.entry.id };
-}
 
 // `size` is the entry's recorded [width, height]. With it, the element's box is
 // sized up front (see .entry img.sized), so the picture can arrive whenever it
@@ -1059,7 +1103,7 @@ async function healBrokenImage(id) {
 // will reject.
 async function encodeImage(file) {
   // A canvas round-trip flattens an animated GIF to its first frame.
-  if (file.type === "image/gif") return file.size <= IMG_MAX_BYTES ? file : null;
+  if (file.type === "image/gif") return file.size <= MAX_IMAGE_BYTES ? file : null;
   let out = null;
   try {
     const bmp = await createImageBitmap(file);
@@ -1072,8 +1116,8 @@ async function encodeImage(file) {
     // Browsers without WebP encoding fall back to PNG here, which is also fine.
     out = await new Promise((r) => canvas.toBlob(r, "image/webp", 0.85));
   } catch { out = null; }
-  const original = IMG_TYPES.has(file.type) && file.size <= IMG_MAX_BYTES ? file : null;
-  if (!out || !IMG_TYPES.has(out.type) || out.size > IMG_MAX_BYTES) return original;
+  const original = ALLOWED_TYPES.has(file.type) && file.size <= MAX_IMAGE_BYTES ? file : null;
+  if (!out || !ALLOWED_TYPES.has(out.type) || out.size > MAX_IMAGE_BYTES) return original;
   // Re-encoding a small image can make it bigger; keep whichever is smaller.
   return original && original.size <= out.size ? original : out;
 }
@@ -1109,7 +1153,7 @@ async function attachImage(file, listId, entryId) {
   saveNow(); // get the reference to the server promptly — until it lands, the object is an orphan
   if (body.dataset.mode === "insert") {
     // Mid-edit: render() would tear out the live textarea, so patch the node.
-    const li = board.querySelector(`.entry[data-entry-id="${entryId}"]`);
+    const li = entryEls.get(entryId);
     if (li) { li.querySelector("img")?.remove(); li.appendChild(imgFor(id, size)); }
   } else render();
 }
@@ -1138,7 +1182,8 @@ function pasteTarget() {
     const sec = li?.closest(".list");
     return li && sec ? { listId: sec.dataset.listId, entryId: li.dataset.entryId } : null;
   }
-  return selectedEntryIds();
+  const sel = selected();
+  return sel && { listId: sel.list.id, entryId: sel.entry.id };
 }
 
 // Ctrl+V with an image on the clipboard. Works the same on mobile, where the
@@ -1322,8 +1367,8 @@ document.addEventListener("keydown", (e) => {
     case "r": e.preventDefault(); deleteCurrentPlan(); break;
     case "o": {
       e.preventDefault();
-      const sel = selectedEntryIds();
-      if (sel) openImageView(sel.listId, sel.entryId);
+      const sel = selected();
+      if (sel) openImageView(sel.list.id, sel.entry.id);
       break;
     }
     case " ": e.preventDefault(); openPalette(); break;
@@ -1347,7 +1392,7 @@ function selectById(listId, entryId) {
 function editEntryById(listId, entryId, x, y) {
   if (!selectById(listId, entryId)) return;
   const { listIndex: li, entryIndex: ei } = state.selection;
-  const fresh = board.querySelectorAll(".list")[li]?.querySelectorAll(".entry")[ei];
+  const fresh = entryEls.get(entryId);
   if (fresh) editEntry(li, ei, false, caretOffsetFromPoint(x, y, fresh));
 }
 function editListById(listId) {
@@ -1488,11 +1533,13 @@ if (state.isTouch) {
 async function reveal() {
   if (body.classList.contains("ready")) return;
   await Promise.race([
-    Promise.all([
+    // Async wrapper: a browser without FontFaceSet.load (older Servo) rejects
+    // into the catch instead of throwing past it and never revealing the page.
+    (async () => Promise.all([
       document.fonts.load("1em Sora"),
       document.fonts.load("1em 'Hammersmith One'"),
       ...[...board.querySelectorAll("img:not(.sized)")].map((img) => img.decode()),
-    ]).catch(() => {}),
+    ]))().catch(() => {}),
     new Promise((r) => setTimeout(r, 1500)),
   ]);
   body.classList.add("ready");
@@ -1537,7 +1584,9 @@ async function refresh() {
   if (savePending || uploads > 0 || body.dataset.mode === "insert") return;
   let res;
   refreshing = true;
-  try { res = await fetch("/api/data", { cache: "no-store" }); } catch { return; }
+  // The server answers 304 (not ok, so nothing to do) while our version is current.
+  try { res = await fetch("/api/data", { cache: "no-store", headers: { "X-Plan-Version": String(state.data.version ?? 0) } }); }
+  catch { return; }
   finally { refreshing = false; }
   if (!res.ok) return;
   const remote = await res.json();
