@@ -479,6 +479,7 @@ body[data-view="multi"] #dots {
 /* default (desktop): hide mobile-only chrome */
 #actions,
 #nav-toggle,
+#m-undo,
 #img-actions,
 .confirm-btn {
   display: none;
@@ -560,6 +561,34 @@ body.touch #nav-toggle {
 
 body.touch.nav-open #nav-toggle {
   bottom: 8px;
+}
+
+/* Undo bubble: twin of #nav-toggle, bottom-left, floating just above the open
+   bar (56px), only while it's open. */
+body.touch.nav-open #m-undo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  left: 12px;
+  bottom: 68px;
+  z-index: 10;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0.2rem solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+/* Entries swipe sideways (setupTouch): the browser only pans vertically on
+   them, and the moved entry must not scroll its list horizontally. */
+body.touch .entry {
+  touch-action: pan-y;
+}
+
+body.touch .entries {
+  overflow-x: hidden;
 }
 
 body.touch.nav-open #nav-toggle svg {

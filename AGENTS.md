@@ -122,7 +122,9 @@ Detected via `matchMedia("(hover: none) and (pointer: coarse)")` OR mobile UA re
 - Default single view (also any window < 600px).
 - `#topbar` always visible. Desktop: passive header with plan name, `#m-view` hidden, `#m-palette` no handler. Mobile: `#m-palette` opens palette, `#m-view` toggles view.
 - `#actions` collapsed behind `#nav-toggle` (toggles `body.nav-open`).
-- Swipe-to-switch lists only in single view; multi view scrolls naturally (no latching).
+- Swipe-to-switch lists only in single view, only starting off entries; multi view scrolls naturally (no latching).
+- Entry swipe (normal mode): left deletes, right toggles todo, past 30% width. Entry follows finger over `--accent` strip (offset box-shadow). Latches on first move if horizontal; long-press drag aborts it.
+- `#m-undo`: bottom-left bubble above open `#actions` (`nav-open` only) = Ctrl+Z; commits open field first.
 - Palette hides search input on mobile (`body.touch #palette-input { display: none }`); full tappable list.
 - Confirm dialogs render `Confirm` button; hidden desktop (Enter → `form.requestSubmit()`).
 - Tap empty space → deselect (single: entry only; multi: both).

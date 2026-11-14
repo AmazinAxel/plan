@@ -1498,9 +1498,45 @@ function setupTouch() {
     if (!e.target.closest(".list") && body.dataset.mode === "normal") deselectOutside();
   }, true);
 
+  // Entry swipe (normal mode): left deletes, right toggles todo. The entry
+  // follows the finger; a box-shadow offset back by the same distance fills the
+  // strip it vacated. Direction latches on the first real move: mostly vertical
+  // = scroll, abandoned. A Sortable drag (long-press) owns the finger instead.
+  let swipe = null;
+  board.addEventListener("touchstart", (e) => {
+    const li = e.touches.length === 1 && body.dataset.mode === "normal" && e.target.closest(".entry");
+    swipe = li ? { li, x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, on: false } : null;
+  }, { passive: true });
+  board.addEventListener("touchmove", (e) => {
+    if (!swipe) return;
+    if (body.classList.contains("dragging")) { endSwipe(); return; }
+    const dx = e.touches[0].clientX - swipe.x, dy = e.touches[0].clientY - swipe.y;
+    if (!swipe.on) {
+      if (Math.hypot(dx, dy) < 8) return;
+      if (Math.abs(dx) <= Math.abs(dy)) { swipe = null; return; }
+      swipe.on = true;
+    }
+    swipe.dx = dx;
+    swipe.li.style.transform = `translateX(${dx}px)`;
+    swipe.li.style.boxShadow = `${-dx}px 0 var(--accent)`;
+  }, { passive: true });
+  const endSwipe = (e) => {
+    const s = swipe;
+    swipe = null;
+    if (!s?.on) return;
+    s.li.style.transform = s.li.style.boxShadow = "";
+    if (e?.type !== "touchend" || Math.abs(s.dx) < s.li.offsetWidth * 0.3) return;
+    if (!selectById(s.li.closest(".list").dataset.listId, s.li.dataset.entryId)) return;
+    if (s.dx < 0) deleteEntry(); else toggleTodo();
+  };
+  board.addEventListener("touchend", endSwipe);
+  board.addEventListener("touchcancel", endSwipe);
+
+  // List swipe (below) only off entries — an entry swipe is its own gesture.
   let touchStart = null;
   board.addEventListener("touchstart", (e) => {
-    if (e.touches.length === 1) touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    if (e.touches.length !== 1) return;
+    touchStart = e.target.closest(".entry") ? null : { x: e.touches[0].clientX, y: e.touches[0].clientY };
   }, { passive: true });
   board.addEventListener("touchend", (e) => {
     if (!touchStart) return;
@@ -1521,6 +1557,10 @@ function setupTouch() {
     "del-list": deleteCurrentList,
     "toggle-todo": toggleTodo
   })[e.target.dataset.act]?.());
+  fastTap($("m-undo"), () => {
+    if (isField(document.activeElement)) document.activeElement.blur(); // commit first
+    undo();
+  });
   fastTap($("m-palette"), openPalette);
   fastTap($("m-view"), toggleView);
 }
