@@ -112,6 +112,19 @@ button {
   cursor: pointer;
 }
 
+/* Inline icons (index.html) carry only viewBox + paths; stroke look lives here.
+   Square caps/joins: no rounding anywhere. */
+svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
 dialog {
   background: var(--surface);
   color: var(--fg);
@@ -194,11 +207,10 @@ body.touch #m-view {
   position: absolute;
   right: 16px;
   color: var(--lightest1);
-  display: inline-block;
+  display: block;
   border: 0.2rem solid var(--border);
-  padding: 4px 10px;
+  padding: 6px;
   cursor: pointer;
-  font-size: 12px;
 }
 
 /* board */
@@ -468,7 +480,6 @@ body[data-view="multi"] #dots {
 #dots span {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
   background: var(--darkest3);
 }
 
@@ -479,7 +490,6 @@ body[data-view="multi"] #dots {
 /* default (desktop): hide mobile-only chrome */
 #actions,
 #nav-toggle,
-#m-undo,
 #img-actions,
 .confirm-btn {
   display: none;
@@ -541,44 +551,31 @@ body.touch.nav-open #actions {
   display: flex;
 }
 
-/* floating bottom-right button to show/hide the nav bar. When the bar is
-   open it is 56px tall; bottom:8px centers the 40px button within it. */
+/* floating bottom-right diamond to show/hide the nav bar: a 36px square
+   rotated 45deg (≈51px tip to tip), icon counter-rotated. When the bar is
+   open it is 56px tall; bottom:10px centers the button within it. */
 body.touch #nav-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
   position: fixed;
-  right: 12px;
-  bottom: 12px;
+  right: 16px;
+  bottom: 16px;
   z-index: 10;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 0.2rem solid var(--border);
-  border-radius: 50%;
   background: var(--surface);
+  transform: rotate(45deg);
+}
+
+body.touch #nav-toggle svg {
+  transform: rotate(-45deg);
 }
 
 body.touch.nav-open #nav-toggle {
-  bottom: 8px;
-}
-
-/* Undo bubble: twin of #nav-toggle, bottom-left, floating just above the open
-   bar (56px), only while it's open. */
-body.touch.nav-open #m-undo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: fixed;
-  left: 12px;
-  bottom: 68px;
-  z-index: 10;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0.2rem solid var(--border);
-  border-radius: 50%;
-  background: var(--surface);
+  bottom: 10px;
 }
 
 /* Entries swipe sideways (setupTouch): the browser only pans vertically on
@@ -592,7 +589,7 @@ body.touch .entries {
 }
 
 body.touch.nav-open #nav-toggle svg {
-  transform: rotate(180deg);
+  transform: rotate(135deg);
 }
 
 /* The preview covers #actions, so it carries its own copy of the bottom bar —
@@ -614,12 +611,26 @@ body.touch #img-actions button {
   flex: 1 1 0;
   min-width: 0;
   max-width: 180px;
+  height: 36px;
   font-size: 12px;
-  padding: 6px 8px;
+  padding: 0 8px;
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Icon buttons: fixed 36px squares, icon centered; text buttons share the rest. */
+body.touch #actions .icon {
+  flex: none;
+  width: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+body.touch #actions button:disabled {
+  opacity: 0.35;
 }
 
 body.touch #dots {

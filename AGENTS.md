@@ -91,7 +91,7 @@ Four concerns, in file order:
 1. State + persistence: `state.data` mirrors server. `save()` throttles one PUT per `SAVE_INTERVAL` (5s); `saveNow()` immediate for destructive (deletes, undo, images, background).
 2. Render: one `render()` reconciles `<main>` by list/entry id (`listEls`/`entryEls` maps; `_k`/`_f`/`_sel`/`_items` node caches) and touches only what changed; Sortables kept per element. Servo pays per DOM call + per reflow (full rebuild ≈ 10× slower there). Code that hollows out a node (editors) resets its `_k`. Measure before writes, write after (`scrollSelectionIntoView`): one forced layout per action.
 3. Modes: `body.dataset.mode` = `"normal" | "insert" | "palette" | "confirm" | "image"` (background dialog reuses `palette`). Desktop key handler no-op outside `normal`.
-   - Undo: `pushHistory()` deep-clones `state.data` + `selection` onto 5-deep stack before each mutation; `undo()` (Ctrl+Z, normal only) restores. Restored snapshots keep live `state.data.version` (no 409). Abandoned creations pop their snapshot (no no-op undo). `applyRemote()` clears stack.
+   - Undo: `pushHistory()` deep-clones `state.data` + `selection` onto 5-deep stack before each mutation; `undo()` (Ctrl+Z, normal only) restores, pushing current onto `future`; `redo()` (Ctrl+Shift+Z) reverses. `pushHistory()` clears `future`. Restored snapshots keep live `state.data.version` (no 409). Abandoned creations pop their snapshot (no no-op undo). `applyRemote()` clears stack.
 4. Drag: SortableJS, groups `"lists"` (horizontal), `"entries"`. Cross-list in single view: drag flips to multi view for duration (`onStart` in `attachSortables`), back on drop. Own edge auto-scroll replaces Sortable's. Disabled while editing (text selection). Desktop single view cycles lists on 80px+ horizontal mouse drag over empty board.
 
 ### Desktop keys (normal mode)
@@ -114,6 +114,7 @@ Four concerns, in file order:
 | Ctrl+V | Attach clipboard image (replaces). Works while editing (mobile long-press paste) |
 | Ctrl+Shift+V | Remove entry image. Normal only (don't shadow paste-plain). Not undoable |
 | Ctrl+Z | Undo create/delete/edit/reorder/move/todo/bg, 5 deep |
+| Ctrl+Shift+Z | Redo last undo, 5 deep |
 | Ctrl+C | Copy entry text |
 | Esc | Deselect entry, keep list (modals own close) |
 
@@ -123,8 +124,9 @@ Detected via `matchMedia("(hover: none) and (pointer: coarse)")` OR mobile UA re
 - `#topbar` always visible. Desktop: passive header with plan name, `#m-view` hidden, `#m-palette` no handler. Mobile: `#m-palette` opens palette, `#m-view` toggles view.
 - `#actions` collapsed behind `#nav-toggle` (toggles `body.nav-open`).
 - Swipe-to-switch lists only in single view, only starting off entries; multi view scrolls naturally (no latching).
-- Entry swipe (normal mode): left deletes, right toggles todo, past 30% width. Entry follows finger over `--accent` strip (offset box-shadow). Latches on first move if horizontal; long-press drag aborts it.
-- `#m-undo`: bottom-left bubble above open `#actions` (`nav-open` only) = Ctrl+Z; commits open field first.
+- Entry swipe (normal mode): left deletes, right toggles todo, past 30% width. Selection unchanged: target passed to `deleteEntry`/`toggleTodo` explicitly (no select round-trip). Entry follows finger over `--accent` strip (offset box-shadow). Latches on first move if horizontal; long-press drag aborts it.
+- `#actions` starts with undo / redo icons (= Ctrl+Z / Ctrl+Shift+Z; commit open field first); `#m-redo` `disabled` (greyed) while `future` empty, synced in `render()`. New list / delete plan = icons; `#m-view` = eye icon.
+- No rounding anywhere (no `border-radius`, square line caps). Inline icons = `viewBox` + paths only; one global `svg` rule styles stroke. Bar icon buttons = 36px squares. `#nav-toggle` = diamond (rotated square, icon counter-rotated).
 - Palette hides search input on mobile (`body.touch #palette-input { display: none }`); full tappable list.
 - Confirm dialogs render `Confirm` button; hidden desktop (Enter → `form.requestSubmit()`).
 - Tap empty space → deselect (single: entry only; multi: both).

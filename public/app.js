@@ -89,12 +89,14 @@ function saveNow() {
 // The data blob is tiny, so a deep clone per action is cheap.
 const HISTORY_LIMIT = 5;
 const history = [];
+// Undone snapshots, newest last; Ctrl+Shift+Z re-applies them. Any fresh
+// mutation (pushHistory) forks the timeline and drops them.
+const future = [];
+const snapshot = () => ({ data: structuredClone(state.data), selection: { ...state.selection } });
 function pushHistory() {
-  history.push({
-    data: structuredClone(state.data),
-    selection: { ...state.selection }
-  });
+  history.push(snapshot());
   if (history.length > HISTORY_LIMIT) history.shift();
+  future.length = 0;
 }
 // The server deletes an image the moment the blob stops referencing it, so a
 // snapshot must never hold a reference the live data has dropped — undoing into
@@ -103,7 +105,7 @@ function pushHistory() {
 // on the same pass for the same reason.
 function scrubHistory() {
   const live = liveImageIds();
-  for (const snap of history) {
+  for (const snap of [...history, ...future]) {
     eachEntry(snap.data, (e) => { if (e.image && !live.has(e.image)) { delete e.image; delete e.imageSize; } });
   }
   for (const id of imgCache.keys()) if (!live.has(id)) imgCache.delete(id);
@@ -113,9 +115,14 @@ function scrubHistory() {
     objectUrls.delete(id);
   }
 }
-function undo() {
-  const prev = history.pop();
+const undo = () => stepHistory(history, future);
+const redo = () => stepHistory(future, history);
+// Pop a snapshot off one stack, saving the current state onto the other.
+function stepHistory(from, to) {
+  const prev = from.pop();
   if (!prev) return;
+  to.push(snapshot());
+  if (to.length > HISTORY_LIMIT) to.shift();
   // Keep the live server version so the next save doesn't 409 against a stale one.
   prev.data.version = state.data.version;
   state.data = prev.data;
@@ -238,6 +245,7 @@ function render() {
   if ($("m-plan-name").textContent !== title) $("m-plan-name").textContent = title;
   const isDefault = plan.name === "Plan";
   if ($("m-del-plan").hidden !== isDefault) $("m-del-plan").hidden = isDefault;
+  if ($("m-redo").disabled !== !future.length) $("m-redo").disabled = !future.length;
   const docTitle = !plan.name ? "plan" : isDefault ? "Plan" : `${plan.name} plan`;
   if (document.title !== docTitle) document.title = docTitle;
   showBackground(plan.background);
@@ -631,8 +639,8 @@ function newEntryBelow(chainable = false) {
   editEntry(state.selection.listIndex, at, true, null, chainable);
 }
 
-function toggleTodo() {
-  const { list, entry } = selected() || {};
+// Both act on the selection by default; a swipe passes its own target.
+function toggleTodo({ list, entry } = selected() || {}) {
   if (!entry) return;
   pushHistory();
   if (entry.todo) {
@@ -645,11 +653,18 @@ function toggleTodo() {
   save(); render();
 }
 
-function deleteEntry() {
-  const { list } = selected() || {};
+// Keyboard deletes the selected entry and lands on the next one. A swipe
+// (explicit target) leaves the selection where it was: indices below shift
+// back, and a swiped-away selected entry falls back to its list.
+function deleteEntry(target) {
+  const sel = state.selection;
+  const { list, i } = target || { list: selected()?.list, i: sel.entryIndex };
   if (!list) return;
   pushHistory();
-  list.entries.splice(state.selection.entryIndex, 1);
+  list.entries.splice(i, 1);
+  if (target && activePlan().lists[sel.listIndex] === list && sel.entryIndex >= i) {
+    sel.entryIndex = sel.entryIndex === i ? -1 : sel.entryIndex - 1;
+  }
   saveNow(); render();
 }
 
@@ -1357,7 +1372,7 @@ document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && !e.altKey) {
     const sel = selected();
     if (key === "c" && sel) { e.preventDefault(); navigator.clipboard?.writeText(sel.entry.text); }
-    else if (key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if (key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     // Ctrl+Shift+V — remove the selected entry's image. Normal mode only, so it
     // doesn't shadow paste-as-plain-text while editing.
     else if (key === "v" && e.shiftKey) { e.preventDefault(); if (sel) detachImage(sel.list.id, sel.entry.id); }
@@ -1526,8 +1541,11 @@ function setupTouch() {
     if (!s?.on) return;
     s.li.style.transform = s.li.style.boxShadow = "";
     if (e?.type !== "touchend" || Math.abs(s.dx) < s.li.offsetWidth * 0.3) return;
-    if (!selectById(s.li.closest(".list").dataset.listId, s.li.dataset.entryId)) return;
-    if (s.dx < 0) deleteEntry(); else toggleTodo();
+    // Acts on the swiped entry without moving the selection.
+    const list = activePlan().lists.find((l) => l.id === s.li.closest(".list").dataset.listId);
+    const i = list ? list.entries.findIndex((en) => en.id === s.li.dataset.entryId) : -1;
+    if (i < 0) return;
+    if (s.dx < 0) deleteEntry({ list, i }); else toggleTodo({ list, entry: list.entries[i] });
   };
   board.addEventListener("touchend", endSwipe);
   board.addEventListener("touchcancel", endSwipe);
@@ -1551,16 +1569,17 @@ function setupTouch() {
 
   // Chrome buttons fire on press, not on the synthetic click on release.
   fastTap($("nav-toggle"), () => body.classList.toggle("nav-open"));
-  fastTap($("actions"), (e) => ({
+  // Undo/redo commit an open field first.
+  const commitThen = (fn) => () => { if (isField(document.activeElement)) document.activeElement.blur(); fn(); };
+  const acts = {
     "del-plan": deleteCurrentPlan,
     "new-list": newList,
     "del-list": deleteCurrentList,
-    "toggle-todo": toggleTodo
-  })[e.target.dataset.act]?.());
-  fastTap($("m-undo"), () => {
-    if (isField(document.activeElement)) document.activeElement.blur(); // commit first
-    undo();
-  });
+    "toggle-todo": toggleTodo,
+    undo: commitThen(undo),
+    redo: commitThen(redo)
+  };
+  fastTap($("actions"), (e) => acts[e.target.closest("button")?.dataset.act]?.());
   fastTap($("m-palette"), openPalette);
   fastTap($("m-view"), toggleView);
 }
@@ -1641,7 +1660,7 @@ async function loadData() {
 // blob (in state.selection), so render() re-clamps it.
 function applyRemote(remote) {
   state.data = remote;
-  history.length = 0; // snapshots are relative to the old blob; don't let undo clobber remote edits
+  history.length = future.length = 0; // snapshots are relative to the old blob; don't let undo clobber remote edits
   render();
 }
 
