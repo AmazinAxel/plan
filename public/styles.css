@@ -31,6 +31,8 @@
   --headerFont: 'Hammersmith One', Roboto, sans-serif;
   --primaryFont: 'Sora', Roboto, sans-serif;
   --ease: cubic-bezier(0, 0.6, 0.3, 1);
+  /* outer size of every mobile chrome button (bars, view toggle, diamond tip-to-tip) */
+  --btn: 40px;
 
   /* semantic */
   --bg: var(--darkest1);
@@ -207,9 +209,12 @@ body.touch #m-view {
   position: absolute;
   right: 16px;
   color: var(--lightest1);
-  display: block;
+  display: grid;
+  place-items: center;
+  width: var(--btn);
+  height: var(--btn);
   border: 0.2rem solid var(--border);
-  padding: 6px;
+  padding: 0;
   cursor: pointer;
 }
 
@@ -551,19 +556,23 @@ body.touch.nav-open #actions {
   display: flex;
 }
 
-/* floating bottom-right diamond to show/hide the nav bar: a 36px square
-   rotated 45deg (≈51px tip to tip), icon counter-rotated. When the bar is
-   open it is 56px tall; bottom:10px centers the button within it. */
+/* floating bottom-right diamond to show/hide the nav bar, icon counter-rotated.
+   Side = --btn/√2 so the rotated tip-to-tip box is exactly --btn, matching the
+   square buttons; --dz is how far that box overhangs the unrotated layout box,
+   added to right/bottom so the visible diamond sits 16px from the edges (closed)
+   and centered in the 56px bar (open). */
 body.touch #nav-toggle {
+  --side: calc(var(--btn) / 1.41421);
+  --dz: calc((var(--btn) - var(--side)) / 2);
   display: flex;
   align-items: center;
   justify-content: center;
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  right: calc(16px + var(--dz));
+  bottom: calc(16px + var(--dz));
   z-index: 10;
-  width: 36px;
-  height: 36px;
+  width: var(--side);
+  height: var(--side);
   padding: 0;
   border: 0.2rem solid var(--border);
   background: var(--surface);
@@ -575,7 +584,7 @@ body.touch #nav-toggle svg {
 }
 
 body.touch.nav-open #nav-toggle {
-  bottom: 10px;
+  bottom: calc((56px - var(--btn)) / 2 + var(--dz));
 }
 
 /* Entries swipe sideways (setupTouch): the browser only pans vertically on
@@ -611,7 +620,7 @@ body.touch #img-actions button {
   flex: 1 1 0;
   min-width: 0;
   max-width: 180px;
-  height: 36px;
+  height: var(--btn);
   font-size: 12px;
   padding: 0 8px;
   text-align: center;
@@ -620,10 +629,10 @@ body.touch #img-actions button {
   text-overflow: ellipsis;
 }
 
-/* Icon buttons: fixed 36px squares, icon centered; text buttons share the rest. */
+/* Icon buttons: fixed --btn squares, icon centered; text buttons share the rest. */
 body.touch #actions .icon {
   flex: none;
-  width: 36px;
+  width: var(--btn);
   display: grid;
   place-items: center;
   padding: 0;

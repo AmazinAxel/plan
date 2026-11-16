@@ -1575,7 +1575,6 @@ function setupTouch() {
     "del-plan": deleteCurrentPlan,
     "new-list": newList,
     "del-list": deleteCurrentList,
-    "toggle-todo": toggleTodo,
     undo: commitThen(undo),
     redo: commitThen(redo)
   };

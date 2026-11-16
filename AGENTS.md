@@ -125,8 +125,8 @@ Detected via `matchMedia("(hover: none) and (pointer: coarse)")` OR mobile UA re
 - `#actions` collapsed behind `#nav-toggle` (toggles `body.nav-open`).
 - Swipe-to-switch lists only in single view, only starting off entries; multi view scrolls naturally (no latching).
 - Entry swipe (normal mode): left deletes, right toggles todo, past 30% width. Selection unchanged: target passed to `deleteEntry`/`toggleTodo` explicitly (no select round-trip). Entry follows finger over `--accent` strip (offset box-shadow). Latches on first move if horizontal; long-press drag aborts it.
-- `#actions` starts with undo / redo icons (= Ctrl+Z / Ctrl+Shift+Z; commit open field first); `#m-redo` `disabled` (greyed) while `future` empty, synced in `render()`. New list / delete plan = icons; `#m-view` = eye icon.
-- No rounding anywhere (no `border-radius`, square line caps). Inline icons = `viewBox` + paths only; one global `svg` rule styles stroke. Bar icon buttons = 36px squares. `#nav-toggle` = diamond (rotated square, icon counter-rotated).
+- `#actions` starts with undo / redo icons (= Ctrl+Z / Ctrl+Shift+Z; commit open field first); `#m-redo` `disabled` (greyed) while `future` empty, synced in `render()`. New list / delete plan / delete list = icons; `#m-view` = two offset boxes.
+- No rounding anywhere (no `border-radius`, square line caps). Inline icons = `viewBox` + paths only; one global `svg` rule styles stroke. All chrome buttons `--btn` (40px) squares: bar icons, `#m-view`. `#nav-toggle` = diamond (rotated square, side `--btn`/√2 → tip-to-tip = `--btn`, icon counter-rotated).
 - Palette hides search input on mobile (`body.touch #palette-input { display: none }`); full tappable list.
 - Confirm dialogs render `Confirm` button; hidden desktop (Enter → `form.requestSubmit()`).
 - Tap empty space → deselect (single: entry only; multi: both).
@@ -136,7 +136,7 @@ Detected via `matchMedia("(hover: none) and (pointer: coarse)")` OR mobile UA re
 - Nothing selected (`listIndex < 0`): delete-list removes last active list, toggle-view lands on it, via `resolvedListIndex()` (falls back to first). `state.lastListIndex` updated in `render()` when real list selected.
 - Tap entry: select + edit, caret at tap. Soft-keyboard Enter commits and always opens fresh entry below (keyboard stays up); Enter on blank commits nothing, stops. `chainable` flag through `newEntryBelow`/`editEntry` marks new-list flow (chains on desktop too); else desktop follows its Enter rule. New list name starts chain only if committed with Enter (`chainOnCommit` in `editList`); tap away just creates list. Chain ends on non-Enter blur (tap outside) → normal mode. Touch outside live field commits on lift (recovers to normal if `insert` with no focused field).
 - Tap `.list-name`: select list (`entryIndex = -1`), edit name.
-- `#actions`: `del-plan`, `new-list`, `del-list`, `toggle-todo` (= desktop Tab). New plans via palette `<New plan>` only.
+- `#actions`: `del-plan`, `new-list`, `del-list`. Todo toggle = entry swipe right only. New plans via palette `<New plan>` only.
 - Tap entry image → preview: fills viewport, faded backdrop, own bar `#img-actions` (new tab / delete) since `#actions` is behind backdrop. Tap outside picture/bar closes; `#img-view` has own close handler, not `attachBackdropClose` (letterboxing hits `<img>`). Desktop: `Delete`/`Backspace`, `n` (new tab), `c` (copy as PNG), `Esc`.
 - All modals close on backdrop tap. Anything dismissing on `pointerdown` (backdrop, palette rows via `fastTap`, `.confirm-btn`) calls `swallowNextClick()`.
 
