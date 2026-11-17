@@ -553,6 +553,9 @@ body.touch #topbar {
   order: 3;
   border-bottom: none;
   border-top: 0.2rem solid var(--border);
+  /* 56px below the border line, buttons centered in it. */
+  height: calc(56px + 0.2rem);
+  padding-block: 0;
 }
 
 /* Phones only ever show one column, so multi view buys nothing there. */
@@ -564,19 +567,21 @@ body.touch #topbar {
 
 /* Empty strip under the list to start list-switching swipes on (swipes
    starting on entries act on the entry instead). Dropped while the keyboard
-   is up. */
-body.touch:not([data-mode="insert"]) #board {
+   is up, and when the plan has a single list (no dots = nothing to swipe to). */
+body.touch:not([data-mode="insert"]):has(#dots:not([hidden])) #board {
   padding-bottom: 96px;
 }
 
 /* Per-list mobile buttons (render()): "+" bottom-right adds an entry at the
-   top; trash top-right over the header deletes the list, only while empty.
-   Both hidden while editing. */
+   top; an empty list shows trash over the header in its place. Both hidden
+   while editing. Each is centered on the row it overlays: the button takes
+   that row's font, so 1lh is the row's line height (rows = 10px padding
+   top and bottom + one line). */
 .list {
   position: relative;
 }
 
-body.touch:not([data-mode="insert"]) .list-add,
+body.touch:not([data-mode="insert"]) .list:not([data-empty]) .list-add,
 body.touch:not([data-mode="insert"]) .list[data-empty] .list-del {
   display: grid;
 }
@@ -594,11 +599,13 @@ body.touch:not([data-mode="insert"]) .list[data-empty] .list-del {
 }
 
 .list-add {
-  bottom: 6px;
+  bottom: calc((20px + 1lh - var(--btn)) / 2);
 }
 
 .list-del {
-  top: 6px;
+  font-family: var(--headerFont);
+  font-size: 22px;
+  top: calc((20px + 1lh - var(--btn)) / 2);
 }
 
 /* Entries swipe sideways (setupTouch): the browser only pans vertically on
