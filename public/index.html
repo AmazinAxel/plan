@@ -16,16 +16,7 @@
 <body data-mode="normal" data-view="multi">
   <header id="topbar">
     <button type="button" id="m-palette"><span id="m-plan-name">Plan</span></button>
-    <button type="button" id="m-view" aria-label="Toggle view">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg>
-    </button>
-  </header>
-
-  <main id="board" tabindex="-1"></main>
-
-  <nav id="dots" hidden></nav>
-
-  <footer id="actions" hidden>
+    <div id="actions">
     <button type="button" data-act="undo" class="icon" aria-label="Undo">
       <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>
     </button>
@@ -35,17 +26,15 @@
     <button type="button" data-act="new-list" class="icon" aria-label="New list">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
     </button>
-    <button type="button" data-act="del-plan" id="m-del-plan" class="icon" aria-label="Delete plan">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+    <button type="button" data-act="view" id="m-view" class="icon" aria-label="Toggle view">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg>
     </button>
-    <button type="button" data-act="del-list" class="icon" aria-label="Delete list">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h10M4 18h6M15 18h6"/></svg>
-    </button>
-  </footer>
+    </div>
+  </header>
 
-  <button type="button" id="nav-toggle" aria-label="Toggle actions">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg>
-  </button>
+  <main id="board" tabindex="-1"></main>
+
+  <nav id="dots" hidden></nav>
 
   <dialog id="palette">
     <form method="dialog">

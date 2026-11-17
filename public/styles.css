@@ -179,7 +179,7 @@ dialog form {
   border-bottom: 0.2rem solid var(--border);
 }
 
-#topbar button {
+#m-palette {
   background: transparent;
   border: none;
   padding: 0;
@@ -190,39 +190,37 @@ dialog form {
   color: var(--blue2);
 }
 
-#m-view {
-  display: none;
-}
-
 @media (max-width: 400px) {
   #topbar {
     justify-content: flex-start;
   }
 }
 
-/* Short viewports (landscape phone, soft keyboard up): the board needs the room. */
-@media (max-height: 500px) {
-  #topbar {
-    display: none;
-  }
-}
-
 body.touch #m-palette {
   padding: 4px 10px;
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-body.touch #m-view {
-  position: absolute;
-  right: 16px;
-  color: var(--lightest1);
-  display: grid;
-  place-items: center;
-  width: var(--btn);
-  height: var(--btn);
-  border: 0.2rem solid var(--border);
-  padding: 0;
-  cursor: pointer;
+/* Mobile: plan name left, action icons right-aligned in the same bar. */
+body.touch #topbar {
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+body.touch #actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Soft keyboard up (editing): the board needs the room. */
+body.touch[data-mode="insert"] #topbar {
+  display: none;
 }
 
 /* board */
@@ -472,7 +470,9 @@ body.dragging[data-view="single"] #board>.list {
   display: flex;
 }
 
-body[data-view="single"] #dots {
+/* renderDots() sets `hidden` with fewer than two lists; without the :not() this
+   rule would override it and keep reserving the row at the bottom. */
+body[data-view="single"] #dots:not([hidden]) {
   display: flex;
 }
 
@@ -501,7 +501,8 @@ body[data-view="multi"] #dots {
 
 /* default (desktop): hide mobile-only chrome */
 #actions,
-#nav-toggle,
+.list-add,
+.list-del,
 #img-actions,
 .confirm-btn {
   display: none;
@@ -535,8 +536,7 @@ body.touch dialog textarea {
 }
 
 body.touch #topbar,
-body.touch #dots,
-body.touch #actions {
+body.touch #dots {
   flex: 0 0 auto;
 }
 
@@ -546,83 +546,59 @@ body.touch #board {
   min-height: 0;
 }
 
-/* Mobile: plan name bar sits at the bottom, under the (collapsible) action
-   bar, so the nav toggle floats inside it. */
+/* Mobile: plan name bar sits at the bottom of the page. */
 body.touch #board { order: 1; }
 body.touch #dots { order: 2; }
-body.touch #actions { order: 3; }
 body.touch #topbar {
-  order: 4;
+  order: 3;
   border-bottom: none;
   border-top: 0.2rem solid var(--border);
 }
 
 /* Phones only ever show one column, so multi view buys nothing there. */
 @media (max-width: 600px) {
-  body.touch #m-view {
+  body.touch #actions #m-view {
     display: none;
   }
 }
 
-/* Tall screens: empty strip under the list to start list-switching swipes on
-   (swipes starting on entries act on the entry instead). */
-@media (min-height: 501px) {
-  body.touch #board {
-    padding-bottom: 96px;
-  }
-
-  body.touch #nav-toggle,
-  body.touch.nav-open #nav-toggle {
-    bottom: calc((56px - var(--btn)) / 2 + var(--dz));
-  }
+/* Empty strip under the list to start list-switching swipes on (swipes
+   starting on entries act on the entry instead). Dropped while the keyboard
+   is up. */
+body.touch:not([data-mode="insert"]) #board {
+  padding-bottom: 96px;
 }
 
-/* nav bar hidden by default on mobile; toggled open via #nav-toggle.
-   Fixed height so the toggle button can be centered against it. */
-body.touch #actions {
-  justify-content: center;
-  align-items: center;
-  gap: 6px;
-  height: 56px;
-  /* leave room on the right for the floating toggle button */
-  padding: 0 62px 0 10px;
-  border-top: 0.2rem solid var(--border);
-  background: var(--surface);
+/* Per-list mobile buttons (render()): "+" bottom-right adds an entry at the
+   top; trash top-right over the header deletes the list, only while empty.
+   Both hidden while editing. */
+.list {
+  position: relative;
 }
 
-body.touch.nav-open #actions {
-  display: flex;
+body.touch:not([data-mode="insert"]) .list-add,
+body.touch:not([data-mode="insert"]) .list[data-empty] .list-del {
+  display: grid;
 }
 
-/* floating bottom-right diamond to show/hide the nav bar, icon counter-rotated.
-   Side = --btn/√2 so the rotated tip-to-tip box is exactly --btn, matching the
-   square buttons; --dz is how far that box overhangs the unrotated layout box,
-   added to right/bottom so the visible diamond sits 16px from the edges (closed)
-   and centered in the 56px bar (open). */
-body.touch #nav-toggle {
-  --side: calc(var(--btn) / 1.41421);
-  --dz: calc((var(--btn) - var(--side)) / 2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: fixed;
-  right: calc(16px + var(--dz));
-  bottom: calc(16px + var(--dz));
-  z-index: 10;
-  width: var(--side);
-  height: var(--side);
+.list-add,
+.list-del {
+  position: absolute;
+  right: 6px;
+  z-index: 1;
+  place-items: center;
+  width: var(--btn);
+  height: var(--btn);
   padding: 0;
-  border: 0.2rem solid var(--border);
   background: var(--surface);
-  transform: rotate(45deg);
 }
 
-body.touch #nav-toggle svg {
-  transform: rotate(-45deg);
+.list-add {
+  bottom: 6px;
 }
 
-body.touch.nav-open #nav-toggle {
-  bottom: calc((56px - var(--btn)) / 2 + var(--dz));
+.list-del {
+  top: 6px;
 }
 
 /* Entries swipe sideways (setupTouch): the browser only pans vertically on
@@ -633,10 +609,6 @@ body.touch .entry {
 
 body.touch .entries {
   overflow-x: hidden;
-}
-
-body.touch.nav-open #nav-toggle svg {
-  transform: rotate(135deg);
 }
 
 /* The preview covers #actions, so it carries its own copy of the bottom bar —
@@ -700,6 +672,16 @@ body.touch .confirm-btn {
 }
 
 body.touch #palette-input {
+  display: none;
+}
+
+/* Mobile "[New plan]": the search field comes back as the name field. */
+body.touch #palette[data-naming] #palette-input {
+  display: block;
+  width: 100%;
+}
+
+#palette[data-naming] #palette-list {
   display: none;
 }
 

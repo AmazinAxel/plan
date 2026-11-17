@@ -184,9 +184,16 @@ function render() {
       const ul = document.createElement("ul");
       ul.className = "entries";
       ul.dataset.listId = l.id;
-      el.append(name, ul);
+      // Mobile-only (CSS): trash over the header while the list is empty, "+"
+      // bottom-right for a new entry at the top. Between header and <ul> so
+      // firstChild/lastChild stay the header and the scroller.
+      const del = listButton("list-del", "Delete list", ICON_TRASH, () => deleteListById(l.id));
+      const add = listButton("list-add", "New entry", ICON_PLUS, () => newEntryAtTop(l.id));
+      el.append(name, del, add, ul);
     }
     listEls.set(l.id, el);
+    const empty = !l.entries.length;
+    if (el._e !== empty) { el.toggleAttribute("data-empty", empty); el._e = empty; }
     const sel = li === state.selection.listIndex;
     const f = sel ? state.selection.entryIndex : null;
     if (el._f !== f) {
@@ -244,7 +251,6 @@ function render() {
   const title = plan.name || "—";
   if ($("m-plan-name").textContent !== title) $("m-plan-name").textContent = title;
   const isDefault = plan.name === "Plan";
-  if ($("m-del-plan").hidden !== isDefault) $("m-del-plan").hidden = isDefault;
   if ($("m-redo").disabled !== !future.length) $("m-redo").disabled = !future.length;
   const docTitle = !plan.name ? "plan" : isDefault ? "Plan" : `${plan.name} plan`;
   if (document.title !== docTitle) document.title = docTitle;
@@ -488,7 +494,9 @@ function keepFocusOnTabSwitch(input) {
   return () => input.removeEventListener("blur", onBlur, true);
 }
 
-function editList(listIndex, isNew = false) {
+// `newPlan`: this is the first list of a plan just created from the palette —
+// abandoning it (Esc, or committing an empty name) drops the whole plan.
+function editList(listIndex, isNew = false, newPlan = false) {
   const plan = activePlan();
   const list = plan.lists[listIndex];
   if (!list) return;
@@ -507,8 +515,9 @@ function editList(listIndex, isNew = false) {
   // ("keep going"); committing by tapping/clicking away just creates the list.
   let chainOnCommit = false;
   const commit = () => {
-    stopKeep();
     const v = input.value.trim();
+    if (newPlan && !v && list.entries.length === 0) return cancel();
+    stopKeep();
     if (!isNew && v !== list.name) pushHistory();
     list.name = v;
     save();
@@ -520,7 +529,8 @@ function editList(listIndex, isNew = false) {
     if (isNew && !list.name && list.entries.length === 0) {
       plan.lists.splice(listIndex, 1);
       state.selection.entryIndex = -1;
-      history.pop(); // discard the snapshot newList() pushed for this abandoned list
+      history.pop(); // discard the snapshot newList()/createNew pushed for this abandoned list
+      if (newPlan) dropIfEmpty(plan);
       save();
     }
     setMode("normal"); render();
@@ -689,16 +699,44 @@ function deleteEntry(target) {
   saveNow(); render();
 }
 
-function deleteCurrentPlan() {
-  const plan = activePlan();
-  if (!plan || plan.name === "Plan") return; // the default plan is protected
-  confirmModal(`delete plan "${plan.name || "—"}"?`, () => {
-    pushHistory();
-    state.data.plans = state.data.plans.filter((p) => p.id !== plan.id);
-    state.data.activePlanId = state.data.plans[0].id;
-    state.selection = { listIndex: 0, entryIndex: -1 };
-    saveNow(); render();
-  });
+// A plan lives as long as it has lists: once its last list goes, the plan goes
+// too (except the protected "Plan") and "Plan" becomes active.
+function dropIfEmpty(plan) {
+  if (plan.lists.length || plan.name === "Plan") return;
+  state.data.plans = state.data.plans.filter((p) => p.id !== plan.id);
+  state.data.activePlanId = state.data.plans.find((p) => p.name === "Plan").id;
+  state.selection = { listIndex: 0, entryIndex: -1 };
+}
+
+const ICON_TRASH = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>';
+const ICON_PLUS = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
+function listButton(cls, label, icon, fn) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = cls;
+  b.ariaLabel = label;
+  b.innerHTML = icon;
+  // Keep the press away from Sortable (long-press drag) and the board's
+  // swipe/deselect handlers.
+  fastTap(b, (e) => { e.stopPropagation(); fn(); });
+  return b;
+}
+
+const listIndexById = (id) => activePlan().lists.findIndex((l) => l.id === id);
+
+function deleteListById(id) {
+  const li = listIndexById(id);
+  if (li < 0) return;
+  state.selection = { listIndex: li, entryIndex: -1 };
+  deleteCurrentList();
+}
+
+function newEntryAtTop(id) {
+  const li = listIndexById(id);
+  if (li < 0) return;
+  state.selection = { listIndex: li, entryIndex: -1 };
+  newEntryBelow();
 }
 
 // When nothing is selected (listIndex < 0), fall back to the last active list on
@@ -720,6 +758,7 @@ function deleteCurrentList() {
     pushHistory();
     plan.lists.splice(state.selection.listIndex, 1);
     state.selection.entryIndex = -1;
+    dropIfEmpty(plan);
     saveNow(); render();
   };
   if (list.entries.length === 0) { doDelete(); return; }
@@ -902,15 +941,20 @@ function openPalette() {
   const input = $("palette-input");
   const list = $("palette-list");
   input.value = "";
+  // Mobile hides the search field, so "[New plan]" with no query brings it back
+  // as a name field (see createNew).
+  let naming = false;
+  delete dlg.dataset.naming;
+  input.placeholder = "Search";
   // On the default "Plan", start on the second row; elsewhere start on "Plan".
   const defaultIndex = state.data.plans.findIndex((p) => p.name === "Plan");
   let highlighted = activePlan().name === "Plan" ? 1 : Math.max(0, defaultIndex);
   setMode("palette");
 
   const matching = () => state.data.plans.filter((p) => !input.value || fuzzyMatch(input.value, p.name));
-  // "<New plan>" is appended after all matches, at index matches.length, but
-  // only while a query is typed.
-  const showNew = () => !!input.value.trim();
+  // "[New plan]" is appended after all matches, at index matches.length, but
+  // only while a query is typed (always on mobile, which has no search field).
+  const showNew = () => state.isTouch || !!input.value.trim();
   const count = () => matching().length + (showNew() ? 1 : 0);
   const refresh = () => {
     const matches = matching();
@@ -928,7 +972,7 @@ function openPalette() {
     });
     if (!showNew()) return;
     const newLi = document.createElement("li");
-    newLi.textContent = "<New plan>";
+    newLi.textContent = "[New plan]";
     if (highlighted === matches.length) newLi.dataset.active = "";
     fastTap(newLi, createNew);
     list.appendChild(newLi);
@@ -942,11 +986,21 @@ function openPalette() {
   };
 
   const createNew = () => {
+    if (!input.value.trim()) {
+      // Mobile, no query: ask for the name. Focused inside the tap itself so the
+      // soft keyboard comes up at once.
+      if (!state.isTouch) return;
+      naming = true;
+      dlg.dataset.naming = "";
+      input.placeholder = "Plan name";
+      input.focus();
+      return;
+    }
     pushHistory();
     const p = { id: uuid(), name: input.value.trim(), lists: [{ id: uuid(), name: "", entries: [] }] };
     state.data.plans.push(p);
     pick(p.id);
-    editList(0, true);
+    editList(0, true, true);
   };
 
   // Shift+Up/Down reorders the highlighted plan. Only with an empty query, so
@@ -967,6 +1021,10 @@ function openPalette() {
   const ac = new AbortController();
   const signal = ac.signal;
   input.addEventListener("keydown", (e) => {
+    if (naming) {
+      if (e.key === "Enter") { e.preventDefault(); createNew(); }
+      return;
+    }
     const matches = matching();
     const total = count();
     const down = e.key === "ArrowDown" || e.key === "J";
@@ -984,7 +1042,7 @@ function openPalette() {
       else if (matches[highlighted]) pick(matches[highlighted].id);
     }
   }, { signal });
-  input.addEventListener("input", () => { highlighted = 0; refresh(); }, { signal });
+  input.addEventListener("input", () => { if (!naming) { highlighted = 0; refresh(); } }, { signal });
   dlg.addEventListener("close", () => { ac.abort(); if (body.dataset.mode === "palette") setMode("normal"); }, { signal });
   refresh();
   dlg.showModal();
@@ -1424,7 +1482,6 @@ document.addEventListener("keydown", (e) => {
       if (state.selection.entryIndex >= 0) editEntry(state.selection.listIndex, state.selection.entryIndex);
       else editList(state.selection.listIndex);
       break;
-    case "r": e.preventDefault(); deleteCurrentPlan(); break;
     case "o": {
       e.preventDefault();
       const sel = selected();
@@ -1589,19 +1646,16 @@ function setupTouch() {
   });
 
   // Chrome buttons fire on press, not on the synthetic click on release.
-  fastTap($("nav-toggle"), () => body.classList.toggle("nav-open"));
   // Undo/redo commit an open field first.
   const commitThen = (fn) => () => { if (isField(document.activeElement)) document.activeElement.blur(); fn(); };
   const acts = {
-    "del-plan": deleteCurrentPlan,
     "new-list": newList,
-    "del-list": deleteCurrentList,
+    view: toggleView,
     undo: commitThen(undo),
     redo: commitThen(redo)
   };
   fastTap($("actions"), (e) => acts[e.target.closest("button")?.dataset.act]?.());
   fastTap($("m-palette"), openPalette);
-  fastTap($("m-view"), toggleView);
 }
 
 // Backdrop click closes a dialog (mobile expectation).

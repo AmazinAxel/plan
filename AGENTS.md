@@ -27,7 +27,7 @@ type List = { id: string; name: string; entries: Entry[] };
 type Plan = { id: string; name: string; lists: List[]; background?: string };
 type Data = { activePlanId: string; plans: Plan[]; version: number };
 ```
-Single JSON blob, one row of table `data`. Only `src/plan-store.ts` touches it. Plan named exactly `Plan` is special: `putData` enforces it exists; client refuses delete.
+Single JSON blob, one row of table `data`. Only `src/plan-store.ts` touches it. Plan named exactly `Plan` is special: `putData` enforces it exists; client refuses delete. Other plans auto-deleted when last list goes (`dropIfEmpty`).
 
 ## Images (`src/images.ts`)
 - One optional image per entry. `Entry.image` = uuid; bytes in table `images` (`id, ct, at, bytes`), same DB. Never in blob (blob re-PUT in full every save). `isImageId` gates every id by uuid regex.
@@ -106,9 +106,8 @@ Four concerns, in file order:
 | Delete/Backspace | Delete entry, or list if header selected; no confirm if list empty |
 | `n` | New list (empty name; Esc removes empty list) |
 | `e` | Edit list name (or selected entry) |
-| `r` | Delete plan (confirm; `Plan` protected) |
 | `b` | Set/clear plan background URL |
-| `Space` | Plan palette: fuzzy, Enter switches. Up/Down (Shift+J/K) wraps. Shift+↑/↓ with empty query reorders plans (`Plan` fixed). With query, bottom `<New plan>` row creates plan named after query, opens first list name for edit |
+| `Space` | Plan palette: fuzzy, Enter switches. Up/Down (Shift+J/K) wraps. Shift+↑/↓ with empty query reorders plans (`Plan` fixed). With query, bottom `[New plan]` row creates plan named after query, opens first list name for edit (abandoning that name drops the plan) |
 | `v` | Toggle multi/single view (desktop) |
 | `o` | Open entry image full-screen |
 | Ctrl+V | Attach clipboard image (replaces). Works while editing (mobile long-press paste) |
@@ -121,12 +120,12 @@ Four concerns, in file order:
 ### Mobile
 Detected via `matchMedia("(hover: none) and (pointer: coarse)")` OR mobile UA regex; mirrored to `body.touch` (survives Firefox/Zen UA spoofing).
 - Default single view (also any window < 600px).
-- `#topbar` always visible. Desktop: passive header with plan name, `#m-view` hidden, `#m-palette` no handler. Mobile: `#m-palette` opens palette, `#m-view` toggles view.
-- `#actions` collapsed behind `#nav-toggle` (toggles `body.nav-open`).
+- `#topbar` visible. Desktop: passive header with plan name, `#actions` hidden, `#m-palette` no handler. Mobile: bar at page bottom, hidden while editing (keyboard up); name left (opens palette), `#actions` icons right-aligned inside it; `#m-view` hidden ≤600px wide.
+- Board keeps 96px bottom padding (swipe area) except while editing.
 - Swipe-to-switch lists only in single view, only starting off entries; multi view scrolls naturally (no latching).
 - Entry swipe (normal mode): left deletes, right toggles todo, past 30% width. Selection unchanged: target passed to `deleteEntry`/`toggleTodo` explicitly (no select round-trip). Entry follows finger over `--accent` strip (offset box-shadow). Latches on first move if horizontal; long-press drag aborts it.
-- `#actions` starts with undo / redo icons (= Ctrl+Z / Ctrl+Shift+Z; commit open field first); `#m-redo` `disabled` (greyed) while `future` empty, synced in `render()`. New list / delete plan / delete list = icons; `#m-view` = two offset boxes.
-- No rounding anywhere (no `border-radius`, square line caps). Inline icons = `viewBox` + paths only; one global `svg` rule styles stroke. All chrome buttons `--btn` (40px) squares: bar icons, `#m-view`. `#nav-toggle` = diamond (rotated square, side `--btn`/√2 → tip-to-tip = `--btn`, icon counter-rotated).
+- `#actions` starts with undo / redo icons (= Ctrl+Z / Ctrl+Shift+Z; commit open field first); `#m-redo` `disabled` (greyed) while `future` empty, synced in `render()`. Then new list, `#m-view` (two offset boxes).
+- No rounding anywhere (no `border-radius`, square line caps). Inline icons = `viewBox` + paths only; one global `svg` rule styles stroke. All chrome buttons `--btn` (40px) squares: bar icons, `#m-view`, per-list `.list-add`/`.list-del`.
 - Palette hides search input on mobile (`body.touch #palette-input { display: none }`); full tappable list.
 - Confirm dialogs render `Confirm` button; hidden desktop (Enter → `form.requestSubmit()`).
 - Tap empty space → deselect (single: entry only; multi: both).
@@ -136,14 +135,15 @@ Detected via `matchMedia("(hover: none) and (pointer: coarse)")` OR mobile UA re
 - Nothing selected (`listIndex < 0`): delete-list removes last active list, toggle-view lands on it, via `resolvedListIndex()` (falls back to first). `state.lastListIndex` updated in `render()` when real list selected.
 - Tap entry: select + edit, caret at tap. Soft-keyboard Enter follows desktop Enter rule (first commits + stops, burst chains); Enter on blank commits nothing, stops. `chainable` flag through `newEntryBelow`/`editEntry` marks new-list flow (always chains, both platforms). New list name starts chain only if committed with Enter (`chainOnCommit` in `editList`); tap away just creates list. Chain ends on non-Enter blur (tap outside) → normal mode. Touch outside live field commits on lift (recovers to normal if `insert` with no focused field).
 - Tap `.list-name`: select list (`entryIndex = -1`), edit name.
-- `#actions`: `del-plan`, `new-list`, `del-list`. Todo toggle = entry swipe right only. New plans via palette `<New plan>` only.
+- `#actions`: `undo`, `redo`, `new-list`, `view`. Todo toggle = entry swipe right only. New plans via palette `[New plan]` (always shown on mobile; tap → search field returns as name field, focused; Enter creates).
+- Per list (built in `render()`, hidden while editing): `.list-add` bottom-right = new entry at top; `.list-del` trash top-right over header, only while list empty (`data-empty`). Deleting last list drops plan (not `Plan`).
 - Tap entry image → preview: fills viewport, faded backdrop, own bar `#img-actions` (new tab / delete) since `#actions` is behind backdrop. Tap outside picture/bar closes; `#img-view` has own close handler, not `attachBackdropClose` (letterboxing hits `<img>`). Desktop: `Delete`/`Backspace`, `n` (new tab), `c` (copy as PNG), `Esc`.
 - All modals close on backdrop tap. Anything dismissing on `pointerdown` (backdrop, palette rows via `fastTap`, `.confirm-btn`) calls `swallowNextClick()`.
 
 ## Styling (`public/styles.css`)
 - Nord as custom props (`--darkest1`..`--darkest4`, `--lightest1`/`--lightest3`, `--blue2`/`--blue3`; only used ones) + aliases (`--bg`, `--fg`, `--surface`, `--border`, `--accent`) + `--headerFont`, `--primaryFont`, `--ease`.
 - Fonts self-hosted `@font-face` → `public/fonts/*.woff2` (Hammersmith One, Sora variable 300–600). Update: re-pull woff2 from Google CSS (modern UA), save under new filename (immutable cache), update `@font-face` + preload URLs.
-- No desktop buttons: `#actions`, `#nav-toggle`, `#img-actions`, `.confirm-btn` `display: none` unless `body.touch`. Top bar = exception (shown, inert on desktop). Adding a desktop button = wrong; bind a key.
+- No desktop buttons: `#actions`, `.list-add`/`.list-del`, `#img-actions`, `.confirm-btn` `display: none` unless `body.touch`. Top bar = exception (shown, inert on desktop). Adding a desktop button = wrong; bind a key.
 
 ## Invariants
 - `Plan` plan always exists (server + client).
