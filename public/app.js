@@ -708,7 +708,7 @@ function dropIfEmpty(plan) {
   state.selection = { listIndex: 0, entryIndex: -1 };
 }
 
-const ICON_TRASH = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>';
+const ICON_TRASH = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6.12 8.5L7 20h10l.88-11.5"/></svg>';
 const ICON_PLUS = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 
 function listButton(cls, label, icon, fn) {
