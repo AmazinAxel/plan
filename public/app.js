@@ -553,17 +553,37 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
   it.appendChild(input);
   if (img) it.appendChild(img);
   const resize = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
+  // Keep the field centered in the list's scroller while editing (on open, as it
+  // grows, and when the soft keyboard resizes the viewport). A field taller than
+  // the scroller minus EDGE_PAD margins can't be centered: pin the end the caret
+  // is nearer to, so the line being typed stays visible.
+  const follow = () => {
+    const ul = it.parentNode;
+    if (!ul) return;
+    const uRect = ul.getBoundingClientRect();
+    const iRect = input.getBoundingClientRect();
+    const y = iRect.top - uRect.top;
+    let target;
+    if (iRect.height <= ul.clientHeight - 2 * EDGE_PAD) target = ul.scrollTop + y - (ul.clientHeight - iRect.height) / 2;
+    else if (input.selectionEnd > input.value.length / 2) target = ul.scrollTop + y + iRect.height + EDGE_PAD - ul.clientHeight;
+    else target = ul.scrollTop + y - EDGE_PAD;
+    target = Math.max(0, Math.min(ul.scrollHeight - ul.clientHeight, target));
+    if (Math.abs(target - ul.scrollTop) >= 1) ul.scrollTop = target;
+  };
   // Separator styling follows the field as you type, instead of appearing only
   // after the commit re-renders. Just an attribute flip on the <li> already in
   // the DOM — no re-render, no measurable cost.
   const syncSep = () => { it.toggleAttribute("data-sep", isSep(undash(input.value.trim()))); };
-  input.addEventListener("input", () => { resize(); syncSep(); });
+  input.addEventListener("input", () => { resize(); syncSep(); follow(); });
   resize();
   syncSep();
   input.focus();
   const caret = caretPos ?? input.value.length;
   input.setSelectionRange(caret, caret);
-  const stopKeep = keepFocusOnTabSwitch(input);
+  follow();
+  window.addEventListener("resize", follow);
+  const stopKeep = () => { window.removeEventListener("resize", follow); stopKeepFocus(); };
+  const stopKeepFocus = keepFocusOnTabSwitch(input);
   let cancelled = false;
   let chain = false;
   let armsChain = false;
@@ -594,9 +614,11 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
       e.preventDefault();
       // Desktop: only new entries chain, and only once the chain is armed — the
       // first Enter-committed entry in a burst saves-and-stops, every one after
-      // that chains. Same rule on mobile. The new-list flow (chainable) always
-      // keeps going on either platform.
-      chain = chainable || (isNew && state.chainArmed);
+      // that chains. Same rule on mobile, except Enter in an existing entry opens
+      // a new one below (mobile has no normal-mode Enter, so this is the only way
+      // to add an entry to a non-empty list). The new-list flow (chainable)
+      // always keeps going on either platform.
+      chain = chainable || (isNew && state.chainArmed) || (state.isTouch && !isNew);
       armsChain = !chainable && isNew && !state.chainArmed;
       input.blur();
     }
