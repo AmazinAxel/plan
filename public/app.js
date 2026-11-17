@@ -1564,6 +1564,27 @@ function setupTouch() {
   document.addEventListener("touchend", endDismiss);
   document.addEventListener("touchcancel", endDismiss);
 
+  // Hiding the soft keyboard (Android's down button) doesn't blur the field, so
+  // watch the visual viewport: once the keyboard has been seen up during this
+  // edit, the viewport growing back to full height means it was dismissed —
+  // treat that like a tap outside (commit + deselect).
+  const vv = window.visualViewport;
+  if (vv) {
+    const KB = 150; // px of height loss that counts as a keyboard
+    let full = vv.height, kbSeen = false;
+    screen.orientation?.addEventListener("change", () => { full = 0; });
+    vv.addEventListener("resize", () => {
+      const h = vv.height;
+      if (body.dataset.mode !== "insert") { kbSeen = false; full = Math.max(full, h); return; }
+      if (h < full - KB) { kbSeen = true; return; }
+      full = Math.max(full, h);
+      if (!kbSeen) return;
+      kbSeen = false;
+      dismiss = null;
+      dismissEdit(false, null);
+    });
+  }
+
   // Resolve the tapped entry/header now, while the node is still live: only a
   // target in the list being edited re-opens (another list behaves like a
   // background tap).
