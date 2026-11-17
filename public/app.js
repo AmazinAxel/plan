@@ -594,11 +594,10 @@ function editEntry(listIndex, entryIndex, isNew = false, caretPos = null, chaina
       e.preventDefault();
       // Desktop: only new entries chain, and only once the chain is armed — the
       // first Enter-committed entry in a burst saves-and-stops, every one after
-      // that chains. Mobile: Enter always opens the next entry so the keyboard
-      // stays up; Enter on a blank field or tapping outside ends the run. The
-      // new-list flow (chainable) always keeps going on either platform.
-      chain = chainable || state.isTouch || (isNew && state.chainArmed);
-      armsChain = !chainable && !state.isTouch && isNew && !state.chainArmed;
+      // that chains. Same rule on mobile. The new-list flow (chainable) always
+      // keeps going on either platform.
+      chain = chainable || (isNew && state.chainArmed);
+      armsChain = !chainable && isNew && !state.chainArmed;
       input.blur();
     }
     else if (e.key === "Escape") {
