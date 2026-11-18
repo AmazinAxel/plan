@@ -535,6 +535,12 @@ body.touch dialog textarea {
   user-select: text;
 }
 
+/* Thumb reach: modals sit at the bottom of the screen on touch, not centred.
+   The full-screen image preview keeps its own layout. */
+body.touch dialog[open]:not(#img-view) {
+  margin: auto auto calc(16px + env(safe-area-inset-bottom));
+}
+
 body.touch #topbar,
 body.touch #dots {
   flex: 0 0 auto;
